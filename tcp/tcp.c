@@ -291,18 +291,23 @@ int tcp_close(void){
 int tcp_read(char *buf, int maxlen) {
 
     int delivered_bytes;
-
-    /* check if we are finished reading */
-    if ( fin_received() && tcb.rcvd_data_size == 0 ) {
+             
+    /*  if the buffer is empty, and a fin is received, return 0 */
+    if ( tcb.rcvd_data_size == 0 && fin_received() ) {
         return 0;
     }
-
-/* dont forget closed state */
-    if (tcb.state != S_ESTABLISHED
+    
+    /* if the buffer is empty, and the connection is closed, return ERROR */
+    if ( tcb.rcvd_data_size == 0 && tcb.state == CLOSED ) {
+        return -1;
+    }
+    
+    
+    /*  if (tcb.state != S_ESTABLISHED
         && tcb.state != S_FIN_WAIT_1
         && tcb.state != S_FIN_WAIT_2) {
         return -1;
-    }
+    }*/
     
     /* if we are in one of these states we try to receive data */
     if (tcb.state == S_ESTABLISHED
@@ -311,6 +316,9 @@ int tcp_read(char *buf, int maxlen) {
             
         receive_new_data(maxlen);
     }
+    
+
+    if ( fin_received() ) {
     
     delivered_bytes = deliver_received_bytes(buf, maxlen);
 
@@ -437,8 +445,10 @@ int do_packet(void) {
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
 
+
     if (rcvd != -1) {
-    
+
+        /* todo: check ack !! */    
         if (tcb.state == S_LISTEN && (flags & SYN_FLAG)) {
             tcb.their_port = src_port;
         }
