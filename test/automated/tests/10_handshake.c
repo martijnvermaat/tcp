@@ -18,6 +18,8 @@ int main(void) {
 
     char *eth, *ip1, *ip2;
 
+    int pid, status;
+
     ipaddr_t saddr;
 
     eth = getenv("ETH");
