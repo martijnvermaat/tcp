@@ -30,27 +30,25 @@
 */
 
 
-/*
-  Decide if we use 'size' or 'length' or 'len' (for ALL code).
-  Also for 'chars' and 'bytes'. (Be consistent.)
-*/
 #define KEEP_SERVING 1
 #define LISTEN_PORT 80
-#define UNPRIVILIGED_GID 99 /* group nobody on minix is 99 */
-#define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
 #define TIME_OUT 5
-#define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"
+#define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"  /* RFC 1123 */
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpd.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
-/* Buffer sizes */
-#define REQUEST_BUFFER_SIZE 512 /* request header should fit */
+#define REQUEST_BUFFER_SIZE 512  /* the full request header should always fit */
 #define RESPONSE_BUFFER_SIZE 80000
 #define MAX_PATH_LENGTH 255
 #define URL_LENGTH 255
 #define PROTOCOL_LENGTH 10
 #define MIME_TYPE_LENGTH 50
 #define HEADER_LINE_LENGTH 200
+#define HTML_ERROR_LENGTH 300
+
+#define HTML_ERROR "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\
+<html><head><title>Oops</title></head><body><h1>Oops</h1><p>This didn't\
+go too well...</p><hr><address>%s at port %d</address></body></html>\n"
 
 
 typedef enum {
@@ -135,52 +133,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    /* if we are superuser, chroot and change effective uid */
-    /* do this after opening tcp socket, because we need access to /dev/eth */
+    /* if we are superuser, we can chroot for safety */
     if (geteuid() == 0) {
-        /* we could chroot here for safety, only it doesn't accept
-           relative paths, so we won't bother for now... */
+        /* chroot doesn't accept relative paths */
         if (!make_absolute_path(argv[1], absolute_path, MAX_PATH_LENGTH)
             || (chroot(absolute_path) < 0)
             || (chdir("/") < 0)) {
             printf("Could not chroot to www directory\n");
             return 1;
         }
-        /*
-           this must be seteuid() actually on linux, add a preprocessor
-           conditional for this...
-           Also, we should call setgid (setegid on linux) too.
-           Think about the value of UNPRIVILIGED_UID:
-           On minix, nobody is 9999 (gr 99), first user is 10 (gr 3)
-           On linux, nobody is 65534 (gr 65533), first user is 1000 (gr 100)
-           Some sources say a uid of -2 wraps to 65534 on linux, so being
-           effectively user nobody. Check if this really works, and what it
-           does on minix. Also think about what to do with the guid in this
-           case...
-           If we can't sort this out, the alternative is using stat() when
-           opening files to check if it is o+r.
-
-           By the way, maybe check this piece of code again, it would be
-           the ideal solution (only I can't get it to work):
-
-           struct passwd *nobody;
-           if (((nobody = getpwnam("nobody")) == NULL) ||
-               setegid(nobody->pw_gid) ||
-               seteuid(nobody->pw_uid)) {
-               printf("can't change to user nobody.\n");
-               exit (1);
-           }
-        */
-
-        /* this code doesn't seem to work on minix, we check
-           file permissions with stat() instead */
-        /*
-        if (setegid(UNPRIVILIGED_GID) || seteuid(UNPRIVILIGED_UID)) {
-            printf("Could not change to user `nobody'\n");
-            return 1;
-        }
-        */
-        /*printf("Changed root and uid\n");*/
     }
 
 
@@ -560,7 +521,7 @@ int handle_get(char *url) {
         return write_error(STATUS_FORBIDDEN);
     }
 
-    /* check if file is o+r (remove this code if seteuid() is used) */
+    /* check if file is o+r */
     if (!(file_stat.st_mode & S_IROTH)) {
         return write_error(STATUS_FORBIDDEN);
     }
@@ -582,7 +543,6 @@ int handle_get(char *url) {
 
     snprintf(filesize, HEADER_LINE_LENGTH, "%ld", (long) file_stat.st_size);
 
-    /* datetime format as defined in RFC 1123 */
     /* if lastmodified is in the future, just send the current datetime */
     if (difftime(time(NULL), file_stat.st_mtime) < 0) {
         time(&curtime);
@@ -738,10 +698,10 @@ int file_name_character(int c) {
 
 int write_error(http_status status) {
 
-    char lastmodified[HEADER_LINE_LENGTH];
     time_t curtime;
-
-    /* we could send some more info in an HTML body here... */
+    char html_error[HTML_ERROR_LENGTH];
+    char last_modified[HEADER_LINE_LENGTH];
+    char content_length[HEADER_LINE_LENGTH];
 
     /* maybe the error occured after some data was already
        written, so reset the buffer */
@@ -749,14 +709,20 @@ int write_error(http_status status) {
 
     /* send current time as lastmodified */
     time(&curtime);
-    strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
+    strftime(last_modified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
+
+    /* content body */
+    snprintf(html_error, HTML_ERROR_LENGTH, HTML_ERROR, VERSION, LISTEN_PORT);
+
+    snprintf(content_length, HEADER_LINE_LENGTH, "%d", strlen(html_error));
 
     return (write_status(status)
             && write_general_headers()
             && write_header(HEADER_CONTENT_TYPE, "text/plain")
-            && write_header(HEADER_CONTENT_LENGTH, "0")
-            && write_header(HEADER_LAST_MODIFIED, lastmodified)
-            && write_data("\r\n", 2));
+            && write_header(HEADER_CONTENT_LENGTH, content_length)
+            && write_header(HEADER_LAST_MODIFIED, last_modified)
+            && write_data("\r\n", 2)
+            && write_data(html_error, strlen(html_error)));
 
 }
 
@@ -803,6 +769,8 @@ int write_status(http_status status) {
             status_string = "Not Implemented";
             status_code = 501;
     }
+
+    status_code = 200;
 
     /* format status line */
     written = snprintf(status_line, HEADER_LINE_LENGTH, "%s %d %s\r\n", PROTOCOL, status_code, status_string);

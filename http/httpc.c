@@ -22,10 +22,12 @@
 
 #define SERVER_PORT 80
 #define TIME_OUT 10
-#define REQUEST_BUFFER_SIZE 512 /* request should fit */
-#define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
+#define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpc.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
+
+#define REQUEST_BUFFER_SIZE 512 /* request should fit */
+#define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
 
 
 int do_request(char *ip, char *filename);
@@ -215,7 +217,7 @@ int handle_response(char *ip, char *filename) {
 
     /* get current time */
     time(&curtime);
-    strftime(current_time, TIME_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
+    strftime(current_time, TIME_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
 
     printf("Request sent to http server at %s. Received response:\n", ip);
     printf("  The return code was:        %s\n", status_line);
