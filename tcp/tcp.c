@@ -45,6 +45,10 @@ void ack_these_bytes(int bytes_delivered);
 
 tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len);
 void tcp_alarm(int sig);
+int fin_received(void);
+void receive_new_data(int maxlen);
+int deliver_received_bytes(char *buf, int maxlen);
+
 int min(int x, int y);
 int max(int x, int y);
 void print_bits(char c);
@@ -286,67 +290,60 @@ int tcp_close(void){
 
 int tcp_read(char *buf, int maxlen) {
 
-    int bytes_to_read, length, bytes_free_at_end_of_buffer;
     int delivered_bytes;
-    void (*oldsig)(int);
 
+    /* check if we are finished reading */
+    if ( fin_received() && tcb.rcvd_data_size == 0 ) {
+        return 0;
+    }
 
-    /*
-      Okay, this function needs some more thought.
-      As it is now, it can never return more than BUFFER_SIZE
-      at one call.
-
-      What are the semantics of tcp_read? Two possibilities:
-
-      1) If the end of a stream is never reached until it returns
-         0, than the current behaviour is not really a problem
-         (although we must check if it really returns 0 on the
-         end of a stream).
-         Also, in this case we need to revise http.
-
-      2) If the end of a stream is reached when it returns less
-         bytes than asked for, the current behaviour is plain
-         wrong. Because it returns less than BUFFER_SIZE per
-         definition, regardless what is asked for.
-         This are the semantics http assumes (and it has some
-         difficulty with it, see comments in httpc.c).
-    */
-
-    /*
-      Apart from the above, there seems to be a bug in the
-      current implementation that causes tcp_read never to
-      return more bytes than one ip packet can carry. This is
-      especially dangereous if we stuck to the semantics as
-      described in 2) above.
-    */
-
+/* dont forget closed state */
     if (tcb.state != S_ESTABLISHED
         && tcb.state != S_FIN_WAIT_1
         && tcb.state != S_FIN_WAIT_2) {
-        
         return -1;
     }
-        
-    bytes_to_read = min(maxlen, BUFFER_SIZE);
-
-
-    /*
-      While there's no data we have to push AND there's room to read more:
-      handle incomming packets
-    */
     
+    /* if we are in one of these states we try to receive data */
+    if (tcb.state == S_ESTABLISHED
+        || tcb.state == S_FIN_WAIT_1
+        || tcb.state == S_FIN_WAIT_2) {
+            
+        receive_new_data(maxlen);
+    }
+    
+    delivered_bytes = deliver_received_bytes(buf, maxlen);
+
+    return delivered_bytes;
+
+}
+
+
+/* This method helps tcp_read to receive new data by calling do_packet() */
+void receive_new_data(int maxlen) {
+
+    int bytes_to_read;
+    void (*oldsig)(int);
+    
+    bytes_to_read = min(maxlen, BUFFER_SIZE);
     /* reset alarm_went_off */
     alarm_went_off = 0;
     /* use our own alarm fucntion when alarm goes of */
     oldsig = signal(SIGALRM, tcp_alarm);
 
+    /*
+      While there's no data we have to push AND there's room to read more:
+      handle incomming packets
+    */
+
     /* call do_packet while conditions are met */
     while ( alarm_went_off == 0 && 
             tcb.rcvd_data_psh == 0 && 
-            tcb.rcvd_data_size < bytes_to_read) {
+            tcb.rcvd_data_size < bytes_to_read &&
+            !fin_received() ) {
         do_packet();
     }
-    
+     
     if (alarm_went_off) {
         /* reset alarm_went_off and call original alarm function */
         alarm_went_off = 0;
@@ -355,28 +352,33 @@ int tcp_read(char *buf, int maxlen) {
         /* restore old signal handler */
         signal(SIGALRM, oldsig);
     }
+}
 
-    delivered_bytes = min(maxlen, tcb.rcvd_data_size);
 
+
+/* This method helps tcp_read to copy the received data from the circular buffer
+    to the user buffer */
+
+int deliver_received_bytes(char *buf, int maxlen) {
+    
+    int bytes_to_copy, size, first_chunk_sz;
+    
+    bytes_to_copy = min(maxlen, tcb.rcvd_data_size);
+    
     /* copy first chunk out of circular buffer*/
-    bytes_free_at_end_of_buffer = BUFFER_SIZE - tcb.rcvd_data_start;
-    length = min(delivered_bytes, bytes_free_at_end_of_buffer);
-    memcpy(buf, &tcb.rcv_data[tcb.rcvd_data_start], length);
+    first_chunk_sz = BUFFER_SIZE - tcb.rcvd_data_start;
+    size = min(delivered_bytes, first_chunk_sz);
+    memcpy(buf, &tcb.rcv_data[tcb.rcvd_data_start], size);
 
     /* possibly copy second chunk if delivered data wraps in buffer */
-    if (delivered_bytes > BUFFER_SIZE - tcb.rcvd_data_start) {
-        
-        memcpy(&buf[min(delivered_bytes, BUFFER_SIZE - tcb.rcvd_data_start)],
-               tcb.rcv_data,
-               delivered_bytes - (BUFFER_SIZE - tcb.rcvd_data_start));
+    if (bytes_to_copy > first_chunk_sz) {
+        memcpy(&buf[size], tcb.rcv_data, bytes_to_copy - first_chunk_sz);
     }
 
     /* adjust buffer pointers */
-    tcb.rcvd_data_size -= delivered_bytes;
-    tcb.rcvd_data_psh = max(tcb.rcvd_data_psh - delivered_bytes, 0);
-    tcb.rcvd_data_start = (tcb.rcvd_data_start + delivered_bytes) % BUFFER_SIZE;
-
-    return delivered_bytes;
+    tcb.rcvd_data_size -= bytes_to_copy;
+    tcb.rcvd_data_psh = max(tcb.rcvd_data_psh - bytes_to_copy, 0);
+    tcb.rcvd_data_start = (tcb.rcvd_data_start + bytes_to_copy) % BUFFER_SIZE;
 
 }
 
@@ -434,20 +436,23 @@ int do_packet(void) {
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
 
-    if (tcb.state == S_LISTEN && (flags & SYN_FLAG)) {
-        tcb.their_port = src_port;
-    }
+    if (rcvd != -1) {
     
-    if (rcvd != -1 && dst_port == tcb.our_port && src_port == tcb.their_port){
+        if (tcb.state == S_LISTEN && (flags & SYN_FLAG)) {
+            tcb.their_port = src_port;
+        }
     
-        handle_ack(flags, ack_nr);
-        handle_data(flags, seq_nr, data, data_sz);
-        handle_syn(flags, seq_nr, their_ip);
-        handle_fin(flags, seq_nr);
+        if (dst_port == tcb.our_port && src_port == tcb.their_port){
         
-        /* we store this to detect duplicate packets later on */
-        tcb.their_previous_seq_nr = seq_nr;
-        tcb.their_previous_flags = flags;
+            handle_ack(flags, ack_nr);
+            handle_data(flags, seq_nr, data, data_sz);
+            handle_syn(flags, seq_nr, their_ip);
+            handle_fin(flags, seq_nr);
+            
+            /* we store this to detect duplicate packets later on */
+            tcb.their_previous_seq_nr = seq_nr;
+            tcb.their_previous_flags = flags;
+        }
     }
     
     return rcvd;
@@ -841,6 +846,18 @@ void tcp_alarm(int sig){
     alarm_went_off = 1;
     fprintf(stderr,"%s: tcp_alarm went of\n",inet_ntoa(my_ipaddr));
     fflush(stderr);
+}
+
+
+int fin_received(void) {
+    if (tcb.state == S_CLOSE_WAIT ||
+        tcb.state == S_LAST_ACK ||
+        tcb.state == S_CLOSING) {
+        
+        return 1;
+    } else {
+        return 0;
+    }
 }
 
 
