@@ -24,7 +24,11 @@
 #define PROTOCOL "HTTP/1.0"
 
 
-int do_request(char *ip2);
+int do_request(char *ip, char *filename);
+int handle_response(char *filename);
+int parse_url(char *url, char **ip, char **filename);
+int parse_status_line(char **status_line, int *status_ok);
+int add_to_buffer(void);
 
 
 static char response_buffer[RESPONSE_BUFFER_SIZE];
@@ -69,10 +73,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    /* parse url into ip and filename */
     if (!parse_url(argv[1], &ip, &filename)) {
         printf("Invalid url: %s\n", argv[1]);
         return 1;
     }
+
+    printf("filename: %s\n", filename);
+    printf("ip: %s\n", ip);
 
     /* connect to http server */
     if (tcp_connect(inet_aton(ip), SERVER_PORT)) {
@@ -172,6 +180,58 @@ int handle_response(char *filename) {
 
     printf("status: %s\n", status_line);
     printf("is this ok? %d\n", status_ok);
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int parse_url(char *url, char **ip, char **filename) {
+
+    char *p = url;
+
+    if (strlen(url) < 8) {
+        return 0;
+    }
+
+    /* advance to last '/' of protocol */
+    p += 6;
+
+    /* mark end of protocol */
+    if (*p != '/') {
+        return 0;
+    }
+    *p = '\0';
+
+    if (strcmp(url, "http:/") != 0) {
+        return 0;
+    }
+
+    p++;
+
+    /* start of ip */
+    *ip = p;
+
+    /* read ip */
+    while (*p && *p != '/') p++;
+
+    /* end of ip */
+    if (*p != '/') {
+        return 0;
+    }
+    *p = '\0';
+
+    p++;
+
+    /* start of filename */
+    *filename = p;
+
+    /* check for empty filename */
+    if (*p == '\0') {
+        return 0;
+    }
+
+    return 1;
 
 }
 
@@ -289,35 +349,5 @@ int add_to_buffer(void) {
     }
 
     return 1;
-
-}
-
-
-
-
-
-    if (length < 0) {
-        printf("Request failed: could not retreive response from server\n");
-        return 0;
-    }
-
-
-}
-
-
-
-
-
-
-    /* send request */
-    if (tcp_write(request_buffer, request_length) != request_length) {
-        return 1;
-    }
-
-
-    printf("*** Response was cool ***");
-
-
-    return 0;
 
 }
