@@ -1,3 +1,14 @@
+Retourneren uit tcp_read:
+    Omdat we er vanuit kunnen gaan dat alle data de PSH flag bij zich heeft,
+    kunnen we zodra er > 0 bytes in de buffer staan retourneren vanuit
+    tcp_read. Dus als er al iets in staat direct, en anders hoeven we maar een
+    packet met data te lezen.
+    Mooier is het wel als we dat alleen doen als er ook daadwerkelijk een PSH
+    bij zit. Daarvoor houden we een pointer in de buffer bij die aangeeft tot
+    welke byte PSH bij zich had. Zolang er data met PSH in de buffer zit geldt
+    bovenstaand verhaal, anders kunnen we nog even lekker doorlezen en de
+    buffer verder vullen voor we retourneren.
+
 Design decision:
     Wel een buffer dat groter is dan maximum payload per packet en ook
     circulair is. Dit omdat er bijvoorbeeld tijdens een tcp_write wel steeds
@@ -7,6 +18,10 @@ Design decision:
     Gevolg is dat we wel een pointer moeten bijhouden naar de laatste byte in
     de buffer waarvoor PSH geldt (want tot daar moeten we in ieder geval
     altijd direct retourneren bij de eerstvolgende tcp_read).
+
+Design decision:
+    We acken direct als we de data binnen krijgen en in de buffer gezet
+    hebben, dus niet pas als we het geretourneerd hebben vanuit tcp_read.
 
 Design decision:
     recv_tcp_packet retourneert na ieder ip packet dat binnenkomt. 
