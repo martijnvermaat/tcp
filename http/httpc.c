@@ -23,10 +23,11 @@
 #define REQUEST_BUFFER_SIZE 512
 #define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
 #define PROTOCOL "HTTP/1.0"
+#define VERSION "Tiny httpc.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
 
 int do_request(char *ip, char *filename);
-int handle_response(char *filename);
+int handle_response(char *ip, char *filename);
 int parse_url(char *url, char **ip, char **filename);
 int parse_status_line(char **status_line, int *status_ok);
 int parse_header(char **header, char **value);
@@ -95,7 +96,7 @@ int main(int argc, char** argv) {
     }
 
     /* handle response */
-    if (!handle_response(filename)) {
+    if (!handle_response(ip, filename)) {
         tcp_close();
         return 1;
     }
@@ -129,7 +130,8 @@ int do_request(char *ip, char *filename) {
     /* create request */
     request_length = snprintf(request_buffer,
                               REQUEST_BUFFER_SIZE,
-                              "GET /%s %s\r\n", filename, PROTOCOL);
+                              "GET /%s %s\r\nUser-Agent: %s\r\n\r\n",
+                              filename, PROTOCOL, VERSION);
 
     if ((request_length < 0)
         || (request_length >= REQUEST_BUFFER_SIZE)) {
@@ -156,7 +158,7 @@ int do_request(char *ip, char *filename) {
 
 /* 1 on success, 0 on failure */
 
-int handle_response(char *filename) {
+int handle_response(char *ip, char *filename) {
 
     char *status_line;
     char *header;
@@ -212,15 +214,21 @@ int handle_response(char *filename) {
     time(&curtime);
     strftime(current_time, TIME_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
 
-    printf("return code was: %s\n", status_line);
-    printf("date of retreival: %s\n", current_time);
-    printf("document size: %s\n", header_content_length);
-    printf("mime type: %s\n", header_content_type);
-    printf("last modified at: %s\n", header_last_modified);
+    printf("Request sent to http server at %s. Received response:\n", ip);
+    printf("  The return code was:        %s\n", status_line);
+    printf("  Date of retrieval:          %s\n", current_time);
+    printf("  Document last modified at:  %s\n", header_last_modified);
+    printf("  Document size:              %s bytes\n", header_content_length);
+    printf("  Document's mime type:       %s\n", header_content_type);
+
+    if (!status_ok) {
+        printf("Since the status code was not '200 Ok', no data has been written\nto %s\n", filename);
+        return 1;
+    }
 
     /* check for message body */
     if (response_length <= response_pointer) {
-        printf("No message body present\n");
+        printf("No message body was present.\n");
         return 1;
     }
 
@@ -365,8 +373,9 @@ int parse_status_line(char **status_line, int *status_ok) {
     /* NULL terminate status number */
     response_buffer[response_pointer] = '\0';
 
-    /* check for status 200 Ok */
+    /* check for happiness */
     if (strcmp(*status_line, "200") == 0) {
+        /* this is happy enough */
         *status_ok = 1;
     } else {
         *status_ok = 0;

@@ -315,6 +315,14 @@ int parse_request(char *request, http_method *method, char **url, char **protoco
         *method = METHOD_UNKNOWN;
     }
 
+    /*
+      A valid http request should contain the
+      body/header separator \r\n, but as we
+      don't look for headers anyway, we are
+      being nice here to lazy clients and won't
+      check for this.
+    */
+
     return 1;
 
 }
