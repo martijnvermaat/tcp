@@ -414,8 +414,9 @@ int handle_get(char *url) {
 
         bytes_read = 0;
 
-        while ((bytes_read < FILE_BUFFER_SIZE)
-               && ((byte = getc(fp)) != EOF)) {
+        while (bytes_read < FILE_BUFFER_SIZE) {
+            byte = getc(fp);
+            if (feof(fp)) break;
             file_buffer[bytes_read] = byte;
             bytes_read++;
         }
