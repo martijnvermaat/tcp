@@ -66,7 +66,8 @@ typedef enum {
 
 int serve(void);
 int make_absolute_path(char *path, char *absolute);
-int parse_request(char *request, http_method *method, char **url, char **protocol);
+int get_request(void);
+int parse_request(http_method *method, char **url, char **protocol);
 int parse_url(char *url, char **filename, char **mimetype);
 int write_response(http_method method, char *url, char *protocol);
 int send_buffer(void);
@@ -79,6 +80,8 @@ int write_general_headers(void);
 int write_header(http_header header, char *value);
 
 
+static char request_buffer[REQUEST_BUFFER_SIZE];
+static int request_buffer_size;
 static char response_buffer[RESPONSE_BUFFER_SIZE];
 static int response_buffer_size;
 static int alarm_went_off = 0;
@@ -234,8 +237,6 @@ int make_absolute_path(char *path, char *absolute) {
 
 int serve(void) {
 
-    char request_buffer[REQUEST_BUFFER_SIZE + 1]; /* +1 because we NULL term it */
-    int request_length;
     ipaddr_t saddr;
 
     http_method method;
@@ -243,28 +244,20 @@ int serve(void) {
     char *protocol;
 
     response_buffer_size = 0;
+    request_buffer_size = 0;
     alarm_went_off = 0;
 
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
         return 0;
     }
 
-    signal(SIGALRM, alarm_handler);
-    alarm(TIME_OUT);
-    /* read at most REQUEST_BUFFER_SIZE bytes, we won't do
-       anything with request bigger than that anyway... */
-    request_length = tcp_read(request_buffer, REQUEST_BUFFER_SIZE);
-    alarm(0);
-
-    if ((request_length < 1) || alarm_went_off) {
-        tcp_close(); /* is this good? */
+    if (!get_request()) {
+        /* todo: call tcp_read before close? (don't think so) */
+        tcp_close();
         return 1;
     }
 
-    /* NULL terminate request buffer */
-    request_buffer[request_length] = '\0';
-
-    if (parse_request(request_buffer, &method, &url, &protocol)) {
+    if (parse_request(&method, &url, &protocol)) {
         if (!(write_response(method, url, protocol)
               && send_buffer())) {
             tcp_close(); /* todo: is this good? */
@@ -296,67 +289,140 @@ int serve(void) {
 
 /* 1 on success, 0 on failure */
 
-int parse_request(char *request, http_method *method, char **url, char **protocol) {
+int get_request(void) {
 
+    int length;
+    int header_complete = 0;
+
+    /* do tcp_read until we find \r\n\r\n in buffer */
+
+    do {
+
+        signal(SIGALRM, alarm_handler);
+        alarm(TIME_OUT);
+        length = tcp_read(request_buffer + request_buffer_size,
+                          REQUEST_BUFFER_SIZE - request_buffer_size);
+        alarm(0);
+
+        /* could not read any more bytes */
+        if ((length < 1) || alarm_went_off) {
+            return 0;
+        }
+
+        /* byte by byte search for '\r' */
+        while (length > 0) {
+
+            if (request_buffer[request_buffer_size] == '\r') {
+                if ((length >= 4)
+                    && (request_buffer[request_buffer_size+1] == '\n')
+                    && (request_buffer[request_buffer_size+2] == '\r')
+                    && (request_buffer[request_buffer_size+3] == '\n')) {
+                    header_complete = 1;
+                    break;
+                }
+            }
+
+            request_buffer_size++;
+            length--;
+
+        }
+
+        request_buffer_size += length;
+
+    } while (!header_complete);
+
+    return 1;
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int parse_request(http_method *method, char **url, char **protocol) {
+
+    int request_pointer = 0;
     char *method_string;
 
-    char *r = request;
-
     /* read spaces */
-    while (*r && *r == ' ') r++;
+    while ((request_pointer < request_buffer_size)
+           && (request_buffer[request_pointer] == ' ')) {
+        request_pointer++;
+    }
 
     /* start of method */
-    method_string = r;
+    method_string = request_buffer + request_pointer;
 
     /* read method */
-    while (*r && *r != ' ') r++;
+    while ((request_pointer < request_buffer_size)
+           && (request_buffer[request_pointer] != ' ')) {
+        request_pointer++;
+    }
 
-    /* check for space */
-    if (*r != ' ') return 0;
+    /* check end of buffer */
+    if (request_pointer >= request_buffer_size) return 0;
 
     /* NULL terminate method */
-    *r = '\0';
-    r++;
+    request_buffer[request_pointer] = '\0';
+    request_pointer++;
 
     /* read spaces */
-    while (*r && *r == ' ') r++;
+    while ((request_pointer < request_buffer_size)
+           && (request_buffer[request_pointer] == ' ')) {
+        request_pointer++;
+    }
 
     /* start of url */
-    *url = r;
+    *url = request_buffer + request_pointer;
 
     /* read url */
-    while (*r && *r != ' ') r++;
+    while ((request_pointer < request_buffer_size)
+           && (request_buffer[request_pointer] != ' ')) {
+        request_pointer++;
+    }
 
     /* check for space */
-    if (*r != ' ') return 0;
+    if (request_pointer >= request_buffer_size) return 0;
 
     /* NULL terminate url */
-    *r = '\0';
-    r++;
+    request_buffer[request_pointer] = '\0';
+    request_pointer++;
 
     /* read spaces */
-    while (*r && *r == ' ') r++;
+    while ((request_pointer < request_buffer_size)
+           && (request_buffer[request_pointer] == ' ')) {
+           request_pointer++;
+    }
 
     /* start of protocol */
-    *protocol = r;
+    *protocol = request_buffer + request_pointer;
 
     /* read protocol */
-    while (*r && *r != ' ' && *r != '\r') r++;
+    while ((request_pointer < request_buffer_size)
+           && (request_buffer[request_pointer] != ' ')
+           && (request_buffer[request_pointer] != '\r')) {
+        request_pointer++;
+    }
 
     /* read line ending */
-    if (*r == '\r') {
+    if (request_buffer[request_pointer] == '\r') {
         /* \r\n directly following protocol */
-        *r = '\0';
-        r++;
-        if (*r != '\n') return 0;
-    } else  if (*r == ' ') {
+        request_buffer[request_pointer] = '\0';
+        request_pointer++;
+        if (request_buffer[request_pointer] != '\n') return 0;
+    } else  if (request_buffer[request_pointer] == ' ') {
         /* spaces following protocol */
-        *r = '\0';
-        r++;
+        request_buffer[request_pointer] = '\0';
+        request_pointer++;
         /* read spaces */
-        while (*r && *r == ' ') r++;
+        while ((request_pointer < request_buffer_size)
+            && (request_buffer[request_pointer] == ' ')) {
+            request_pointer++;
+        }
         /* read \r\n */
-        if (*r != '\r' || *(++r) != '\n') return 0;
+        if ((request_buffer[request_pointer] != '\r')
+            || (request_buffer[++request_pointer] != '\n')) {
+            return 0;
+        }
     } else {
         /* premature end of request */
         return 0;
