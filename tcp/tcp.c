@@ -786,6 +786,9 @@ void ack_these_bytes(int bytes_delivered) {
 void clear_tcb(void) {
     tcb.state = S_CLOSED;
     tcb.our_ipaddr = my_ipaddr;
+    /*
+      shouldn't we set our_seq_nr to 0 too?
+    */
     tcb.their_seq_nr = 0;
     tcb.their_ipaddr = 0;
     tcb.their_port = 0;
@@ -877,8 +880,14 @@ void declare_event(event_t e) {
         fflush(stdout);
         
     } else if (s == S_CLOSING && e == E_ACK_RECEIVED) {
-        tcb.state = S_TIME_WAIT;
-        printf("%s: Event: E_ACK_RECEIVED, State to S_TIME_WAIT\n",inet_ntoa(my_ipaddr));
+        /*tcb.state = S_TIME_WAIT;*/
+        /*
+          This is a quick hack, to get back to S_CLOSED after the last ack.
+          We have to look into this, if this is really a solution.
+        */
+        tcb.state = S_CLOSED;
+        clear_tcb();
+        printf("%s: Event: E_ACK_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
     
     } else if (s == S_CLOSE_WAIT && e == E_CLOSE) {
@@ -888,6 +897,7 @@ void declare_event(event_t e) {
         
     } else if (s == S_LAST_ACK && e == E_ACK_RECEIVED) {
         tcb.state = S_CLOSED;
+        clear_tcb();
         printf("%s: Event: E_ACK_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
         
