@@ -238,7 +238,6 @@ int tcp_listen(int port, ipaddr_t *src) {
         if (tcb.state == S_SYN_RECEIVED) {
             send_syn();
             if (tcb.state != S_ESTABLISHED) {
-                printf("niet gelukt! laatste ack niet gekregen in 3 way HS\n");
                 return -1;
             }
         }
@@ -253,6 +252,7 @@ int tcp_listen(int port, ipaddr_t *src) {
         /* restore old signal handler */
         signal(SIGALRM, oldsig);
     }
+    *src = tcb.their_ipaddr;
     return 0;
 }
 
@@ -506,9 +506,13 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
 void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
     tcp_u32t fresh_data_start, fresh_data_size;
-    int size, first_chunk_size, free_buffer_space;
+    int size, first_chunk_size, free_buffer_space, 
+        end_of_buffer, free_at_end_of_buffer;
 
-    if (data_size > 0 && tcb.rcvd_data_size < BUFFER_SIZE) {
+    /* number of bytes we can accept */
+    free_buffer_space = BUFFER_SIZE - tcb.rcvd_data_size;
+    
+    if (data_size > 0 && free_buffer_space > 0) {
 
         /* okay, we are able to store more data */
 
@@ -526,37 +530,31 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
                  (fresh_data_start is unsigned and would wrap 
                   around if negative, and become greater than MAX_TCP_DATA)*/
 
-            printf("Incomming data: %d bytes\n", data_size);
-            fflush(stdout);
-
-            /* number of bytes we can accept */
-            free_buffer_space = BUFFER_SIZE - tcb.rcvd_data_size;
+            /* how much are we going to store? */
             size = min(free_buffer_space, fresh_data_size);
 
-            /* now copy the data to our (circular) buffer */
-            if (tcb.rcvd_data_start + tcb.rcvd_data_size >= BUFFER_SIZE) {
+            /* check whether data in buffer has already been wrapped */
+            end_of_buffer = tcb.rcvd_data_start + tcb.rcvd_data_size;
+            if ( end_of_buffer >= BUFFER_SIZE ) {
 
-                /* copy data to buffer in one chunck */
-                memcpy(&tcb.rcv_data[tcb.rcvd_data_start + tcb.rcvd_data_size - BUFFER_SIZE], &data[fresh_data_start], size);
+                /* buffer is wrapped already, copy to buffer in one chunck */
+                end_of_buffer -= BUFFER_SIZE;
+                memcpy(&tcb.rcv_data[end_of_buffer], 
+                                &data[fresh_data_start], size);
 
             } else {
 
                 /* copy data to buffer and wrap at end of buffer if needed */
+                free_at_end_of_buffer = BUFFER_SIZE - end_of_buffer;
+                first_chunk_size = min(size, free_at_end_of_buffer);
 
-                first_chunk_size = min(size, BUFFER_SIZE - (tcb.rcvd_data_start + tcb.rcvd_data_size));
-
-                printf("Copying first chunk of %d bytes\n", first_chunk_size);
-
-                memcpy(&tcb.rcv_data[tcb.rcvd_data_start + tcb.rcvd_data_size], &data[fresh_data_start], first_chunk_size);
+                memcpy(&tcb.rcv_data[end_of_buffer], 
+                            &data[fresh_data_start], first_chunk_size);
 
                 if (first_chunk_size < size) {
 
                     /* second chunck */
-
-                    printf("Copying second chunck of %d bytes\n", size - first_chunk_size);
-
                     memcpy(tcb.rcv_data, &data[fresh_data_start + first_chunk_size], size - first_chunk_size);
-
                 }
 
             }
@@ -608,7 +606,7 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
     } else if (tcb.state == S_SYN_SENT) {
 
         if (all_acks_received()) {
-            fflush(stdout);
+
             declare_event(E_SYN_ACK_RECEIVED);
             /* I think we could just use E_ACK_RECEIVED here instead of a 'special' transition */
             /* todo: received sequence number may be invalid */
@@ -831,6 +829,26 @@ int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
         return 0;
     }
     
+    if (tcb.state == S_LISTEN) {
+    
+        if ( !(flags & SYN_FLAG) || (flags & ACK_FLAG) ) {
+            /* in this state accept syn, but no ack */
+            return 0;
+        }
+    }
+    
+    if (tcb.state == S_SYN_SENT) {
+        /* in this state only accept syn+ack packets */
+        if ( !(flags & ACK_FLAG) || !(flags & SYN_FLAG)) {
+            return 0;
+        }
+        /* is this a reasonable ack number? */
+        diff = tcb.expected_ack - ack_nr;
+        if ( diff >= MAX_TCP_DATA ) {
+            return 0;
+        }
+    }
+    
     /* check seq and ack only if this is not a syn packet */
     if ( !(flags & SYN_FLAG) ) {
     
@@ -843,14 +861,14 @@ int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
         if ( !(flags & ACK_FLAG) ) {
             return 0;
         }
-        /* is this a reasonable acl number? */
+        /* is this a reasonable ack number? */
         diff = tcb.expected_ack - ack_nr;
         if ( diff >= MAX_TCP_DATA ) {
             return 0;
-        }
-        
+        }    
     } 
-        
+    
+    
     /* de don't handle data in a syn/fin packet */
     if ( (flags & SYN_FLAG) || (flags & FIN_FLAG) ) {
         if (data_sz > 0) {
