@@ -24,6 +24,7 @@
   Also for 'chars' and 'bytes'. (Be consistent.)
 */
 #define LISTEN_PORT 80
+#define UNPRIVILIGED_UID 1000
 #define TIME_OUT 5
 #define MAX_REQUEST_LENGTH 512
 #define MAX_RESPONSE_LENGTH 6225
@@ -69,7 +70,6 @@ static void alarm_handler(int sig) {
 int main(int argc, char** argv) {
 
     char *eth, *ip1, *ip2;
-    struct passwd *nobody;
 
     if (argc < 2) {
         printf("No www directory found.\nUsage: %s wwwdir\n", argv[0]);
@@ -79,28 +79,6 @@ int main(int argc, char** argv) {
     if (chdir(argv[1]) < 0) {
         printf("Could not change dir to '%s'.\n", argv[1]);
         return 1;
-    }
-
-    /* if we are superuser, chroot and change effective uid and guid */
-    if (geteuid() == 0) {
-        if (chroot(argv[1]) < 0) {
-            printf("Could not chroot to www directory.\n");
-            return 1;
-        }
-        errno = 0;
-        if (((nobody = getpwnam("nobody")) == NULL)) {
-            printf("1\n");
-            return 1;
-        }
-        if (setegid(nobody->pw_gid)) {
-            printf("2\n");
-            return 1;
-        }
-        if (seteuid(nobody->pw_uid)) {
-            printf("Could not change to user `nobody'.\n");
-            return 1;
-        }
-        printf("Changed root, uid, and guid.\n");
     }
 
     eth = getenv("ETH");
@@ -119,6 +97,22 @@ int main(int argc, char** argv) {
     if (tcp_socket() != 0) {
         printf("HTTPD: Opening socket failed\n");
         return 1;
+    }
+
+    /* if we are superuser, chroot and change effective uid and guid */
+    /* do this after opening tcp socket, because we need access to /dev/eth */
+    if (geteuid() == 0) {
+        if (chroot(argv[1]) < 0) {
+            printf("Could not chroot to www directory.\n");
+            return 1;
+        }
+        /* this must be seteuid() actually on linux, add a preprocessor
+           conditional for this... */
+        if (setuid(UNPRIVILIGED_UID)) {
+            printf("Could not change to user `nobody'.\n");
+            return 1;
+        }
+        printf("Changed root, uid, and guid.\n");
     }
 
     while (serve()) { }
