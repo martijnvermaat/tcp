@@ -565,6 +565,7 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
         if (all_acks_received()) {
             fflush(stdout);
             declare_event(E_SYN_ACK_RECEIVED);
+            /* I think we could just use E_ACK_RECEIVED here instead of a 'special' transition */
             /* todo: received sequence number may be invalid */
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
@@ -836,6 +837,7 @@ void declare_event(event_t e) {
         fflush(stdout);
         
     } else if (s == S_SYN_SENT && e == E_SYN_ACK_RECEIVED) {
+        /* I think we could just use E_ACK_RECEIVED here instead of a 'special' transition */
         tcb.state = S_ESTABLISHED;
         printf("%s: Event: E_SYN_ACK_RECEIVED, State to S_ESTABLISHED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);

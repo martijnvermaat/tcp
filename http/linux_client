@@ -5,4 +5,4 @@ export ETH=1
 export IP1=192.168.0.1  # client IP
 export IP2=192.168.0.2  # server IP
 
-./httpc
+./httpc $*

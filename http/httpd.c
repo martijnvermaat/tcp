@@ -15,6 +15,15 @@
 #define TIME_OUT 5
 #define MAX_REQUEST_LENGTH 512
 #define MAX_RESPONSE_LENGTH 1024
+#define PROTOCOL "HTTP/1.0"
+
+typedef enum {
+    STATUS_OK
+} http_status;
+
+typedef enum {
+    HEADER_CONTENT_TYPE
+} http_header;
 
 
 /*
@@ -25,8 +34,8 @@
 
 int serve(void);
 int response(void);
-int write_header(char *buffer);
-int add_header(char *buffer);
+int write_status(char *buffer, http_status status);
+int write_header(char *buffer, http_header header, char *value);
 int write_body(char *buffer);
 
 
@@ -35,25 +44,35 @@ static void alarm_handler(int sig) {
 }
 
 
-int main(void) {
+int main(int argc, char** argv) {
 
     char *eth, *ip1, *ip2;
 
+    if (argc < 2) {
+        printf("No www dir specified.\n");
+        return 1;
+    }
+
+    if (chdir(argv[1]) < 0) {
+        printf("Could not change dir to '%s'.\n", argv[1]);
+        return 1;
+    }
+
     eth = getenv("ETH");
     if (!eth) {
-        fprintf(stderr, "The ETH environment variable must be set!\n");
+        printf("The ETH environment variable must be set!\n");
         return 1;
     }
 
     ip1 = getenv("IP1");
     ip2 = getenv("IP2");
     if ((!ip1)||(!ip2)) {
-        fprintf(stderr, "The IP1 and IP2 environment variables must be set!\n");
+        printf("The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
 
     if (tcp_socket() != 0) {
-        fprintf(stderr, "HTTPD: Opening socket failed\n");
+        printf("HTTPD: Opening socket failed\n");
         return 1;
     }
 
@@ -105,7 +124,12 @@ int response(void) {
     char response_buffer[MAX_RESPONSE_LENGTH];
     int response_length = 0;
 
-    response_length += write_header(response_buffer + response_length);
+    response_length += write_status(response_buffer + response_length, STATUS_OK);
+
+    response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "text/plain");
+    response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "text/html");
+    response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "application/xhtml+xml");
+
     response_length += write_body(response_buffer + response_length);
 
     if (tcp_write(response_buffer, response_length) != response_length) {
@@ -117,30 +141,34 @@ int response(void) {
 }
 
 
-int write_header(char *buffer) {
+int write_status(char *buffer, http_status status) {
 
-    int length = 0;
+    char *status_string;
+    int status_code;
 
-    length += sprintf(buffer, "%s %d %s\n", "HTTP/1.0", 200, "OK");
+    if (status == STATUS_OK) {
+        status_string = "OK";
+        status_code = 200;
+    } else {
+        return 0;
+    }
 
-    length += add_header(buffer + length);
-    length += add_header(buffer + length);
-
-    /*
-      Seems like a \0 byte gets in the way unless
-      we add the -1 here. I don't get it... sprintf
-      should return the length of the string minu
-      the \0 byte I think (and so it does above)?
-    */
-
-    return length + sprintf(buffer + length, "\n") -1;
+    return sprintf(buffer, "%s %d %s\n", PROTOCOL, status_code, status_string);
 
 }
 
 
-int add_header(char *buffer) {
+int write_header(char *buffer, http_header header, char *value) {
 
-  return sprintf(buffer, "Header: value\n");
+    char *header_string;
+
+    if (header == HEADER_CONTENT_TYPE) {
+        header_string = "Content-Type";
+    } else {
+        return 0;
+    }
+
+    return sprintf(buffer, "%s: %s\n", header_string, value);
 
 }
 
@@ -151,6 +179,8 @@ int write_body(char *buffer) {
     FILE *fp;
     int byte;
     int size = 0;
+
+    size += sprintf(buffer + size, "\n");
 
     fp = fopen(file, "r");
 
@@ -163,20 +193,9 @@ int write_body(char *buffer) {
         ((byte = getc(fp)) != EOF)
         && (size < MAX_RESPONSE_LENGTH)
         ) {
-        size++;
-        sprintf(buffer + size, "%c", byte);
+        size += sprintf(buffer + size, "%c", byte);
         printf("hier eentje\n");
     }
-
-    /*
-      This seems ok, but in the tests I'm not sure if the last byte
-      of the file is transfered correctly...
-
-      Also, there are many ways to read a file. This does it byte by
-      byte (as it was the first method I got working properly).
-      Warning: some methods are no option because they can't handle
-      null bytes for example (e.g. fgets).
-    */
 
     return size;
 
