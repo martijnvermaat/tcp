@@ -36,7 +36,7 @@ int send_ack(void);
 int send_fin(void);
 int do_packet(void);
 void handle_ack(tcp_u8t flags, tcp_u32t ack_nr);
-void handle_data(char *data, int data_size, tcp_u32t seq_nr);
+void handle_data(char *data, int data_size, tcp_u32t seq_nr, int push);
 void handle_syn(ipaddr_t their_ip, tcp_u16t src_port, tcp_u32t seq_nr, tcp_u8t flags);
 void handle_fin(tcp_u8t flags, tcp_u32t seq_nr);
 int set_state(state_t new_state);
