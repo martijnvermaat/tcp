@@ -4,19 +4,22 @@ Design decision:
     data binnen kan komen wanneer we ack's lezen. Deze data kunnen we niet
     direct doorgeven omdat we niet in tcp_read zitten, onafhankelijk van of er
     een PSH flag aan zit of niet.
+    Gevolg is dat we wel een pointer moeten bijhouden naar de laatste byte in
+    de buffer waarvoor PSH geldt (want tot daar moeten we in ieder geval
+    altijd direct retourneren bij de eerstvolgende tcp_read).
 
 Design decision:
     recv_tcp_packet retourneert na ieder ip packet dat binnenkomt. 
     Ook als de checksum verkeerd is, of het geen tcp segment is.
-    Dit is om te voorkomen dat de timer in do_packet niet meer werkt. Als de 
-    timer afgaat en recv_tcp_packet zou in een loop zitten tot er een packet met
-    een correcte checksum arriveert, dan zou de timer geen effect hebben, want 
-    recv_tcp_packet blijft dan in de loop hangen.
+    Dit is om te voorkomen dat de timer in do_packet niet meer werkt. Als de
+    timer afgaat en recv_tcp_packet zou in een loop zitten tot er een packet
+    met een correcte checksum arriveert, dan zou de timer geen effect hebben,
+    want recv_tcp_packet blijft dan in de loop hangen.
 
 Design decision:
-    Na het versturen van de eerste syn, moet er gewacht worden op een ack + syn.
-    Als er een packet binnenkomt met een ack, maar zonder syn, dan negeren we dit
-    packet. De SYN, waar we  op wachten, moet toch de verplichte ACK bevatten. 
-    Als het syn + ack packet niet binnen 1 seconde arriveert, dan gaat de state 
-    naar CLOSED, daarna wordt de syn opnieuw verstuurt. De state gaat weer
-    terug naar SYN_SENT
+    Na het versturen van de eerste syn, moet er gewacht worden op een
+    ack+syn. Als er een packet binnenkomt met een ack, maar zonder syn, dan
+    negeren we dit packet. De SYN, waar we  op wachten, moet toch de
+    verplichte ACK bevatten. Als het syn+ack packet niet binnen 1 seconde
+    arriveert, dan gaat de state naar CLOSED, daarna wordt de syn opnieuw
+    verstuurt. De state gaat weer terug naar SYN_SENT.
