@@ -380,6 +380,7 @@ int deliver_received_bytes(char *buf, int maxlen) {
     tcb.rcvd_data_psh = max(tcb.rcvd_data_psh - bytes_to_copy, 0);
     tcb.rcvd_data_start = (tcb.rcvd_data_start + bytes_to_copy) % BUFFER_SIZE;
 
+    return bytes_to_copy;
 }
 
 
