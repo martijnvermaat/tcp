@@ -5,12 +5,14 @@
 \usepackage{latexsym}
 \usepackage[
     colorlinks,
-    pdftitle={Design Document TCP Implementation},
+    pdftitle={Design Documentation TCP Implementation},
     pdfsubject={TCP implementation},
     pdfauthor={Laurens Bronwasser, Martijn Vermaat}
 ]{hyperref}
 
-\title{Design Document TCP Implementation}
+\pagestyle{headings}
+
+\title{Design Documentation TCP Implementation}
 \author{
     Laurens Bronwasser and Martijn Vermaat\\
     \{lmbronwa,mvermaat\}@cs.vu.nl
@@ -223,7 +225,7 @@ First, we will give an overview of the most important decisions that we made.
 \paragraph{Buffer for incoming data}
     The buffer for incoming data is bigger than the maximum payload of a tcp
     packet. This is necessary because new data might come in while for example 
-    \verb|tcp_write()| is polling for ack's. These data must be stored in the 
+    \lstinline|tcp_write()| is polling for ack's. These data must be stored in the 
     buffer; 
     there is no way we can deliver it to the user.
     The buffer is circular because this prevents shoving of data to the begin of 
@@ -236,64 +238,64 @@ First, we will give an overview of the most important decisions that we made.
     We don't assume that every incoming packet has the PSH flag set, eventhough 
     the assignment prescribes to set PSH on all outbound packets. That we do
     check the PHS flag means 
-    that if it is set, \verb|tcp_read()| delivers is the data immediately.
-    Only if there is no data to be pushed, \verb|tcp_read()| keeps on polling 
+    that if it is set, \lstinline|tcp_read()| delivers is the data immediately.
+    Only if there is no data to be pushed, \lstinline|tcp_read()| keeps on polling 
     ip for 
     more data until the amount of data specified by the user is received.
     
-    \verb|tcp_read()| might return less (if the \verb|PSH| flag is set), but 
-    the \verb|PSH| flag 
-    will never cause \verb|tcp_read()| to return more 
+    \lstinline|tcp_read()| might return less (if the \lstinline|PSH| flag is set), but 
+    the \lstinline|PSH| flag 
+    will never cause \lstinline|tcp_read()| to return more 
     data than indicated by the users parameter.
     
     To keep track of the number of bytes that need to be pushed, a variable is 
-    added to the tcb: \verb|rcvd_data_push|.
+    added to the tcb: \lstinline|rcvd_data_push|.
 
 \paragraph{Acknowledgements}
     If data comes in tcp has never seen before (i.e. fresh data), an 
     acknowledgement is send
-    immediately by \verb|handle_data()|. In real tcp implementations sending of
+    immediately by \lstinline|handle_data()|. In real tcp implementations sending of
      ack's 
     should be postponed until the data is actually delivered to the user, 
     but since the assignment prescribes to use a window of size 1, we have to 
     acknowledge each packet instantly.
 
 \paragraph{Connection establishment}
-    After the first \verb|syn| is sent, the state transits to \verb|SYN_SENT| 
-    and we wait for the \verb|syn+ack| response. In this state, only 
-    \verb|syn+ack| packets will be accepted. If a packet arrives that carries an
-    acknowledgement, but no \verb|syn|,...
+    After the first \lstinline|syn| is sent, the state transits to \lstinline|SYN_SENT| 
+    and we wait for the \lstinline|syn+ack| response. In this state, only 
+    \lstinline|syn+ack| packets will be accepted. If a packet arrives that carries an
+    acknowledgement, but no \lstinline|syn|,...
     Als er een packet binnenkomt met een ack, maar zonder syn, dan
     negeren we dit packet. De SYN, waar we  op wachten, moet toch de
     verplichte ACK bevatten. Als het syn+ack packet niet binnen 1 seconde
     arriveert, dan gaat de state naar CLOSED, daarna wordt de syn opnieuw
-    verstuurt. De state gaat dan weer terug naar \verb|SYN_SENT|.
+    verstuurt. De state gaat dan weer terug naar \lstinline|SYN_SENT|.
     
 \paragraph{State transitions}
-    The \verb|declare_event()| procedure performs all necessary state 
+    The \lstinline|declare_event()| procedure performs all necessary state 
     transitions, based on the event that is passed as a parameter to this 
     procedure. For example, 
-    is the state is \verb|S_LISTEN| and a \verb|syn| is received, 
-    \verb|E_SYN_RECEIVED| is passed to \verb|declare_event()|. The state will 
-    then be altered to \verb|S_SYN_RECEIVED|. In this way, \verb|declare_event()| directly implements the state 
+    is the state is \lstinline|S_LISTEN| and a \lstinline|syn| is received, 
+    \lstinline|E_SYN_RECEIVED| is passed to \lstinline|declare_event()|. The state will 
+    then be altered to \lstinline|S_SYN_RECEIVED|. In this way, \lstinline|declare_event()| directly implements the state 
     transition diagrams shown in appendix A.
     
     There is a trade-off here between straightforward source code and source 
     code that has some build in bug-detection, which are both preferable. If we 
-    had chosen for straightforward code, we had \verb|declare_event()| swallow
-    every event that takes place. For example \verb|handle_ack()| would then 
+    had chosen for straightforward code, we had \lstinline|declare_event()| swallow
+    every event that takes place. For example \lstinline|handle_ack()| would then 
     consist of only one line: 
-    \verb|if (ack_flag) {declare_event(E_ACK_RECEIVED)}|. Then we leave it to 
-    \verb|declare_event| to decide if a state transition is necessary.
+    \lstinline|if (ack_flag) {declare_event(E_ACK_RECEIVED)}|. Then we leave it to 
+    \lstinline|declare_event| to decide if a state transition is necessary.
     On the other hand, if
     some unexpected event happens, we wouldn't notice, because 
-    \verb|declare_event()| gracefully discards the event, without any warning.
+    \lstinline|declare_event()| gracefully discards the event, without any warning.
     
     To make it easier to detect unexpected events (caused by a bug), we decided 
-    to make \verb|declare_event| accept only the events that are defined in the
+    to make \lstinline|declare_event| accept only the events that are defined in the
     state transition diagram. On all other events it starts to yell (on the 
     screen). The consequence is that some code is a little bit more complex, 
-    because we can't just say \verb|declare_event(E_ACK_RECEIVED)|
+    because we can't just say \lstinline|declare_event(E_ACK_RECEIVED)|
     on every incoming ack. We first have to check whether this ack event may 
     declared for a state transition.
     
@@ -555,7 +557,7 @@ int send_ack() {
 \subsubsection{TCP Control Block}
 
 
-The \verb|tcb| (TCP Control Block) contains all information on the
+The \lstinline|tcb| (TCP Control Block) contains all information on the
 current state. This includes client and host addresses and ports, buffer
 data, packet sequence number, etcetera.
 
@@ -591,14 +593,14 @@ typedef struct tcb {
 
 \subsection{Connection-less tier}
 
-The only two procedures in this tier are \verb|send_tcp_packet()| and
-\verb|recv_tcp_packet()|.
+The only two procedures in this tier are \lstinline|send_tcp_packet()| and
+\lstinline|recv_tcp_packet()|.
 
 \paragraph{Procedure recv\_tcp\_packet()}
-This procedure calls \verb|ip\_receive()| only once. If a packet is corrupted,
-or if it is no tcp packet at all, \verb|recv\_tcp\_packet| returns -1.
+This procedure calls \lstinline|ip\_receive()| only once. If a packet is corrupted,
+or if it is no tcp packet at all, \lstinline|recv\_tcp\_packet| returns -1.
 That it does not loop to wait for a valid packet, is because this might take 
-forever. The looping is taken care of by \verb|tcp\_read()|, which checks if the alarm 
+forever. The looping is taken care of by \lstinline|tcp\_read()|, which checks if the alarm 
 went of on every cycle.
 
 
