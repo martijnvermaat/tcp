@@ -9,8 +9,8 @@ int main(void) {
   char buf[] = "ik ben een packet";
   int len;
   int error = 0;
-  len = 17;
   int i;
+  len = 17;
   
     error = tcp_socket();
     

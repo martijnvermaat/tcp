@@ -16,9 +16,9 @@ int main(void) {
 
   ipaddr_t their_ip = inet_aton(THEIR_IP);
 
-  data[maxlen] = '\0';
-
   int error;
+
+  data[maxlen] = '\0';
 
   error = tcp_socket();
 
