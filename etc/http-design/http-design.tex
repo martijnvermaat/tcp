@@ -69,7 +69,26 @@ client and server, we tried to conform with the specification as strict as
 possible. When in doubt, we are being conservative.
 
 
+\subsection{Shared methods and header file}
+
+For the HTTP client and server, we were allowed to use shared files
+\lstinline|http.c| and \lstinline|http.h|. In the end, we decided not to use
+them. Although there are a small number of methods and some type declaration
+we could share between the client and server, the amount is not significant
+enough in our opinion to be put in a separate file. Furthermore, some of this
+code hasn't got anything to do with HTTP in specific, so putting it in
+\lstinline|http.x| would be entirely good practice.
+
+
 \section{HTTP client}
+
+In the HTTP client, the central methods are \lstinline|do_request| and
+\lstinline|handle_response|. Both are called in the \lstinline|main|
+method. The HTTP \lstinline|GET| request is assembled and sent in the
+\lstinline|do_request| method, while the the HTTP response message is read and
+processed in the \lstinline|handle_response| method. The latter checks the
+HTTP response status code and writes the message body to a file if it was a
+status of ``200 OK''.
 
 
 \subsection{General control flow}
@@ -110,7 +129,28 @@ find, we can take this as an error in the response message.
 The message body, however, is not followed by any kind of marker. When reading
 the message body, we know we have it complete if we reach the end of the
 incomming data stream. Therefore, we read the entire stream and have a
-complete message body if the end of the stream is reached.
+complete message body if the end of the stream is reached. We also don't
+depend on the value of the \lstinline|Content-Length| HTTP header, because it
+might not be correct, or be not even present at all.
+
+If we can't reach the end of the incomming data stream, this is an error. The
+partial data will still be written to a file, but the user will be notified of
+this.
+
+
+\subsection{Data buffers}
+
+In the client, we have one central buffer, the response buffer. Assembling the
+client HTTP request is not much work, the buffer used for it is local in the
+\lstinline|do_request| method.
+
+The response buffer is used by much more methods, but we choose not to
+implement it as a global buffer. Instead, it is initialized in the
+\lstinline|handle_response| method which passes a pointer to our current
+location in the buffer and the remaining size of the buffer. During processing
+of the response message body, new data is read from the server and put in the
+buffer whenever the entire buffer is processed. This is done until there is no
+more data to read; the end of the stream is reached.
 
 
 \section{HTTP server}
@@ -161,6 +201,11 @@ partially transfered). Because we don't send the message header and body with
 separate write actions, we never close the connection if sending of data
 failed (although following the spec, it may be done if the message header was
 not sent).
+
+
+\subsection{Data buffers}
+
+xxx
 
 
 \subsection{Running as superuser}
