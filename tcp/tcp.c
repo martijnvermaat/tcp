@@ -4,7 +4,6 @@
 #include "tcp.h"
 #include "unistd.h"
 
-
 #define FIN_FLAG 0x01
 #define SYN_FLAG 0x02
 #define RST_FLAG 0x04
@@ -506,8 +505,8 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
 void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
     tcp_u32t fresh_data_start, fresh_data_size;
-    int size, first_chunk_size, free_buffer_space, 
-        end_of_buffer, free_at_end_of_buffer;
+    int size, first_chunk_size, free_buffer_space, second_chunk_size, 
+        end_of_buffer, free_at_end_of_buffer, start_of_second_chunk;
 
     /* number of bytes we can accept */
     free_buffer_space = BUFFER_SIZE - tcb.rcvd_data_size;
@@ -532,6 +531,17 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
             /* how much are we going to store? */
             size = min(free_buffer_space, fresh_data_size);
+            
+            
+            /* before we proceed, send an ack */
+            /* increase the number of bytes we acked */
+            tcb.ack_nr += size;
+            if ( send_ack() == -1 ) {
+                /* on error decrease ack_nr and discard data in packet */
+                tcb.ack_nr -= size;
+                return;
+            }
+
 
             /* check whether data in buffer has already been wrapped */
             end_of_buffer = tcb.rcvd_data_start + tcb.rcvd_data_size;
@@ -553,8 +563,12 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
                 if (first_chunk_size < size) {
 
-                    /* second chunck */
-                    memcpy(tcb.rcv_data, &data[fresh_data_start + first_chunk_size], size - first_chunk_size);
+                    start_of_second_chunk = fresh_data_start + first_chunk_size;
+                    second_chunk_size = size - first_chunk_size;
+                    
+                    /* copy second chunck */
+                    memcpy(tcb.rcv_data, 
+                            &data[start_of_second_chunk], second_chunk_size);
                 }
 
             }
@@ -566,10 +580,6 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
                 tcb.rcvd_data_psh = tcb.rcvd_data_size;
             }
 
-            /* increase the number of bytes we acked */
-            tcb.ack_nr += size;
-            /* actually send the ack */
-            send_ack();
 
         } else {
         
