@@ -8,10 +8,11 @@
 
 
 int main(void) {
-  char server_buf[10000], client_buf[10000], *eth, *ip1, *ip2;
+  /*char client_buf[10000];*/
+  char server_buf[10000], *eth, *ip1, *ip2;
   
   ipaddr_t saddr;
-  int ws, result,i;
+  int result;
 
   eth = getenv("ETH");
   if (!eth) {

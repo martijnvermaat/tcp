@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "tcp.h"
 
 #define DST_IP getenv("IP2")
