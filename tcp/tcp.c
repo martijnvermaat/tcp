@@ -446,7 +446,7 @@ int tcp_write(const char *buf, int len){
 void do_packet(void) {
     ipaddr_t their_ip;
     tcp_u16t src_port, dst_port, win_sz;
-    tcp_u32t seq_nr, ack_nr, diff;
+    tcp_u32t seq_nr, ack_nr;
     tcp_u8t flags;
     char data[MAX_TCP_DATA];
     int data_sz = 0, rcvd;
@@ -519,10 +519,7 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
     if (data_size > 0 && tcb.rcvd_data_size < BUFFER_SIZE) {
 
-        /* okay, we are able to store data */
-        printf("handle data (size %d)\n", data_size);
-        printf("incoming sequence number: %lu\n", seq_nr);
-        printf("their current sequence number: %lu\n", tcb.their_seq_nr);
+        /* okay, we are able to store more data */
 
         /* calculate start of data that's new to us */
         /* do_packet guarantees that seq_nr is never ahead 
@@ -545,16 +542,10 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
             free_buffer_space = BUFFER_SIZE - tcb.rcvd_data_size;
             size = min(free_buffer_space, fresh_data_size);
 
-            printf("We use %d bytes of it starting at %lu\n", size, fresh_data_start);
-
             /* now copy the data to our (circular) buffer */
-
             if (tcb.rcvd_data_start + tcb.rcvd_data_size >= BUFFER_SIZE) {
 
                 /* copy data to buffer in one chunck */
-
-                printf("Buffer already wrapped, copying %d bytes to buffer\n", size);
-
                 memcpy(&tcb.rcv_data[tcb.rcvd_data_start + tcb.rcvd_data_size - BUFFER_SIZE], &data[fresh_data_start], size);
 
             } else {
@@ -866,7 +857,15 @@ int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
         if ( diff >= MAX_TCP_DATA ) {
             return 0;
         }
-    }    
+        
+    } 
+        
+    /* de don't handle data in a syn/fin packet */
+    if ( (flags & SYN_FLAG) || (flags & FIN_FLAG) ) {
+        if (data_sz > 0) {
+            return 0;
+        }
+    }
     
     if (data_sz > MAX_TCP_DATA){
         return 0;
