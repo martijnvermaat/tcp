@@ -24,7 +24,7 @@ typedef enum{
 typedef enum {
     E_SOCKET_OPEN, E_CONNECT, E_SYN_SENT, E_SYN_ACK_RECEIVED, E_LISTEN,
     E_SYN_RECEIVED, E_SYN_ACK_SENT, E_ACK_RECEIVED, E_ACK_TIME_OUT, E_CLOSE, 
-    E_USER_TIME_OUT, E_FIN_RECEIVED
+    E_PARTNER_DEAD, E_FIN_RECEIVED
 } event_t;
 
 /* Prototypes */
@@ -690,7 +690,7 @@ int send_syn(void) {
             declare_event(E_ACK_TIME_OUT);
         }
     }
-    declare_event(E_USER_TIME_OUT);
+    declare_event(E_PARTNER_DEAD);
     return -1;
 }
 
@@ -727,7 +727,7 @@ int send_fin(void) {
             return 0;
         }
     }
-    declare_event(E_USER_TIME_OUT);
+    declare_event(E_PARTNER_DEAD);
     return -1;
 }
 
@@ -909,10 +909,10 @@ void declare_event(event_t e) {
         printf("%s: Event: E_ACK_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
         
-    } else if (e == E_USER_TIME_OUT) {
+    } else if (e == E_PARTNER_DEAD) {
         tcb.state = S_CLOSED;
         clear_tcb();
-        printf("%s: Event: E_USER_TIME_OUT, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
+        printf("%s: Event: E_PARTNER_DEAD, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
         
     } else {
