@@ -402,7 +402,8 @@ int do_packet(void) {
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
     if (rcvd != -1 && dst_port == tcb.our_port && src_port == tcb.their_port){
-
+        /*fprintf(stderr,"\n%s tcp packet received...\n",inet_ntoa(my_ipaddr)); 
+        fflush(stderr);*/
         handle_ack(flags, ack_nr);
         handle_data(flags, seq_nr, data, data_sz);
         handle_syn(flags, seq_nr, their_ip);
@@ -459,8 +460,8 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
         /* okay, we are able to store data */
 
         printf("handle data (size %d)\n", data_size);
-        printf("incoming sequence number: %lx\n", seq_nr);
-        printf("their current sequence number: %lx\n", tcb.their_seq_nr);
+        printf("incoming sequence number: %lu\n", seq_nr);
+        printf("their current sequence number: %lu\n", tcb.their_seq_nr);
 
         /* start byte of data that's new for us */
         fresh_data_start = tcb.their_seq_nr - seq_nr;  /* shouldn't their_seq_nr be ack_nr? */
@@ -520,33 +521,35 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
                 tcb.rcvd_data_psh = tcb.rcvd_data_size;
             }
 
-            printf("\n%s: handle_data: size: %d",inet_ntoa(my_ipaddr),size);
-            printf("\n%s: handle_data: rcvd_data_size: %u",inet_ntoa(my_ipaddr),tcb.rcvd_data_size);
+            printf("\n%s: handle_data: size: %d\n",inet_ntoa(my_ipaddr),size);
+            printf("\n%s: handle_data: rcvd_data_size: %u\n",inet_ntoa(my_ipaddr),tcb.rcvd_data_size);
 
             ack_these_bytes(size);
-
+/*
   printf("\n\n");
   print_buffer();
   printf("\n\n");
+*/
 
-
+        } else {
+            /* no fresh data, but we need to ack in case the last ack was lost*/
+            ack_these_bytes(0);
         }
-
     }
-
+    
     /* data should always fit in buffer */
     assert(tcb.rcvd_data_size <= BUFFER_SIZE);
-
 }
 
 
 void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
 
+
     if (!(SYN_FLAG & flags)){
         return;
     }
-    printf("\n%s syn received\n",inet_ntoa(my_ipaddr)); 
-    fflush(stdout);
+    fprintf(stderr,"\n%s syn received\n",inet_ntoa(my_ipaddr)); 
+    fflush(stderr);
 
     if (get_state() == S_LISTEN) {
         tcb.their_ipaddr = their_ip;
@@ -775,13 +778,12 @@ int wait_for_ack(void){
 
 void ack_these_bytes(int bytes_delivered) {
 
-    printf("             %s acknr: %lx\n",inet_ntoa(my_ipaddr),tcb.ack_nr);
+    printf("%s acknr: %lx\n",inet_ntoa(my_ipaddr),tcb.ack_nr);
     tcb.ack_nr += bytes_delivered;
-    printf("             %s acknr: %lx\n",inet_ntoa(my_ipaddr),tcb.ack_nr);
+    printf("%s acknr: %lx\n",inet_ntoa(my_ipaddr),tcb.ack_nr);
     send_ack();
     printf("%s acked %d bytes\n",inet_ntoa(my_ipaddr),bytes_delivered);
     fflush(stdout);
-
 }
 
 
@@ -856,17 +858,22 @@ void declare_event(event_t e) {
         tcb.state = S_SYN_ACK_SENT;
         printf("%s: Event: E_SYN_ACK_SENT, State to S_SYN_ACK_SENT\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
-        
+
     } else if (s == S_SYN_ACK_SENT && e == E_ACK_RECEIVED) {
         tcb.state = S_ESTABLISHED;
         printf("%s: Event: E_ACK_RECEIVED, State to S_ESTABLISHED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
-        
+
+    } else if (s == S_SYN_ACK_SENT && e == E_ACK_TIME_OUT) {
+        tcb.state = S_SYN_RECEIVED;
+        printf("%s: Event: E_ACK_TIME_OUT, State to S_SYN_RECEIVED\n",inet_ntoa(my_ipaddr));
+        fflush(stdout); 
+
     } else if (s == S_ESTABLISHED && e == E_CLOSE) {
         tcb.state = S_FIN_WAIT_1;
         printf("%s: Event: E_CLOSE, State to S_FIN_WAIT_1\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
-          
+
     } else if (s == S_FIN_WAIT_1 && e == E_FIN_RECEIVED) {
         tcb.state = S_CLOSING;
         printf("%s: Event: E_FIN_RECEIVED, State to S_CLOSING\n",inet_ntoa(my_ipaddr));
@@ -878,8 +885,12 @@ void declare_event(event_t e) {
         fflush(stdout);
   
     } else if (s == S_FIN_WAIT_2 && e == E_FIN_RECEIVED) {
-        tcb.state = S_TIME_WAIT;
+        /*tcb.state = S_TIME_WAIT;
         printf("%s: Event: E_FIN_RECEIVED, State to S_TIME_WAIT\n",inet_ntoa(my_ipaddr));
+        fflush(stdout);*/
+        tcb.state = S_CLOSED;
+        clear_tcb();
+        printf("%s: Event: E_FIN_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
         
     } else if (s == S_ESTABLISHED && e == E_FIN_RECEIVED) {
@@ -890,7 +901,7 @@ void declare_event(event_t e) {
     } else if (s == S_CLOSING && e == E_ACK_RECEIVED) {
         /*tcb.state = S_TIME_WAIT;*/
         /*
-          This is a quick hack, to get back to S_CLOSED after the last ack.
+          todo: This is a quick hack, to get back to S_CLOSED after the last ack.
           We have to look into this, if this is really a solution.
         */
         tcb.state = S_CLOSED;
@@ -978,10 +989,11 @@ int send_tcp_packet(ipaddr_t dst,
     memcpy(&segment[hdr_sz], data, data_sz);
     
     printf("\n || == %s is sending segment ==\n",inet_ntoa(my_ipaddr));
-    printf(" || seq_nr %lx\n",tcp->seq_nr);
-    printf(" || ack_nr %lx\n",tcp->ack_nr);
-    printf(" || checksum %x\n\n",tcp->checksum);
-       
+    printf(" || seq_nr %lu\n",seq_nr);
+    printf(" || ack_nr %lu\n",ack_nr);
+    printf(" || checksum 0x%x\n",tcp->checksum);
+    printf(" || flags %u\n\n",tcp->flags);
+    
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     if (tcp->checksum != 0) { 
