@@ -25,4 +25,4 @@ client: httpc.o
 	$(CC) $(CFLAGS) -o httpc httpc.o $(LDFLAGS)
 
 clean:
-	rm -f *.o a.out *.bak core errs
+	rm -f *.o a.out *.bak core errs httpd httpc

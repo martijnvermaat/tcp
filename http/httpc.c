@@ -7,18 +7,18 @@
 #include <signal.h>
 #include "tcp.h"
 
-#define LISTEN_PORT 80
+#define SERVER_PORT 80
 #define TIME_OUT 5
-#define MAX_REQUEST_LENGTH 512
+#define MAX_RESPONSE_LENGTH 512
 
 
 /*
-  httpd.c
-  A simple HTTP/1.0 server.
+  httpc.c
+  A simple HTTP/1.0 client.
 */
 
 
-int serve(void);
+int do_request(char *ip2);
 
 
 static void alarm_handler(int sig) {
@@ -44,48 +44,38 @@ int main(void) {
     }
 
     if (tcp_socket() != 0) {
-        fprintf(stderr, "HTTPD: Opening socket failed\n");
+        fprintf(stderr, "HTTPC: Opening socket failed\n");
         return 1;
     }
 
-    while (serve()) { }
-
-    printf("Listening failed.\n");
-
-    return 1;
+    return do_request(ip2);
 
 }
 
 
-int serve(void) {
+int do_request(char *ip2) {
 
-    char buffer[MAX_REQUEST_LENGTH];
-    ipaddr_t saddr;
+    char buffer[MAX_RESPONSE_LENGTH];
 
-    if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
-        return 0;
+    if (tcp_connect(inet_aton(ip2), SERVER_PORT) != 0) {
+        return 1;
+    }
+
+    if (tcp_write("Dit is mijn request.", 20) != 20) {
+        return 1;
     }
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    if (tcp_read(buffer, MAX_REQUEST_LENGTH) < 1) {
+    if (tcp_read(buffer, MAX_RESPONSE_LENGTH) < 1) {
         return 1;
     }
     alarm(0);
-
-    if (tcp_write("Here's my response.", 19) != 19) {
-        return 1;
-    }
 
     if (tcp_close() != 0) {
-        return 0;
+        return 1;
     }
 
-    signal(SIGALRM, alarm_handler);
-    alarm(TIME_OUT);
-    while (tcp_read(buffer, MAX_REQUEST_LENGTH) > 0) {}
-    alarm(0);
-
-    return 1;
+    return 0;
 
 }
