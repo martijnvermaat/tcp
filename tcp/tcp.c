@@ -290,7 +290,7 @@ int tcp_close(void){
 
 int tcp_read(char *buf, int maxlen) {
 
-  int delivered_bytes;
+    int delivered_bytes;
 
     /* check if we are finished reading */
     if ( fin_received() && tcb.rcvd_data_size == 0 ) {
@@ -312,10 +312,10 @@ int tcp_read(char *buf, int maxlen) {
         receive_new_data(maxlen);
     }
     
-    
-    delivered_bytes = deliver_received_bytes(buf, maxlen); 
+    delivered_bytes = deliver_received_bytes(buf, maxlen);
+
     return delivered_bytes;
-     
+
 }
 
 
@@ -367,7 +367,7 @@ int deliver_received_bytes(char *buf, int maxlen) {
     
     /* copy first chunk out of circular buffer*/
     first_chunk_sz = BUFFER_SIZE - tcb.rcvd_data_start;
-    size = min(bytes_to_copy, first_chunk_sz);
+    size = min(delivered_bytes, first_chunk_sz);
     memcpy(buf, &tcb.rcv_data[tcb.rcvd_data_start], size);
 
     /* possibly copy second chunk if delivered data wraps in buffer */
@@ -380,7 +380,6 @@ int deliver_received_bytes(char *buf, int maxlen) {
     tcb.rcvd_data_psh = max(tcb.rcvd_data_psh - bytes_to_copy, 0);
     tcb.rcvd_data_start = (tcb.rcvd_data_start + bytes_to_copy) % BUFFER_SIZE;
 
-    return bytes_to_copy;
 }
 
 
