@@ -35,7 +35,7 @@ int send_fin(void);
 int do_packet(void);
 void handle_ack(tcp_u8t flags, tcp_u32t ack_nr);
 void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size);
-void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip, tcp_u16t src_port);
+void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip);
 void handle_fin(tcp_u8t flags, tcp_u32t seq_nr);
 void declare_event(event_t e);
 state_t get_state(void);
@@ -362,14 +362,14 @@ int do_packet(void) {
     tcp_u8t flags;
     char data[MAX_TCP_DATA];
     int data_sz = 0, rcvd;
-    
+
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
     if (rcvd != -1 && dst_port == tcb.our_port && src_port == tcb.their_port){
 
         handle_ack(flags, ack_nr);
         handle_data(flags, seq_nr, data, data_sz);
-        handle_syn(flags, seq_nr, their_ip, src_port);
+        handle_syn(flags, seq_nr, their_ip);
         handle_fin(flags, seq_nr);
     }
     
@@ -504,7 +504,7 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 }
 
 
-void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip, tcp_u16t src_port) {
+void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
 
     if (!(SYN_FLAG & flags)){
         return;
@@ -516,7 +516,6 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip, tcp_u16t src_
         tcb.their_ipaddr = their_ip;
         printf(" from %s\n",inet_ntoa(their_ip));
         fflush(stdout);
-        tcb.their_port = src_port;
         tcb.their_seq_nr = seq_nr + 1;
         tcb.ack_nr = seq_nr + 1;
     
@@ -570,11 +569,8 @@ void handle_fin(tcp_u8t flags, tcp_u32t seq_nr) {
 int send_data(const char *buf, int len) {
     
     int bytes_sent = 0;
-    char flags = '\0';
+    char flags = PSH_FLAG | ACK_FLAG;
     int retransmission_allowed = MAX_RETRANSMISSION;
-  
-    flags |= PSH_FLAG;
-    flags |= ACK_FLAG;
 
     while (retransmission_allowed--) {
         bytes_sent = send_tcp_packet(tcb.their_ipaddr, tcb.our_port, 
@@ -609,12 +605,9 @@ int send_data(const char *buf, int len) {
 int send_syn(void) {
     
     char *buf;
-    char flags = '\0';
+    char flags = PSH_FLAG | SYN_FLAG;
     int retransmission_allowed = MAX_RETRANSMISSION;
     int result;
-  
-    flags |= PSH_FLAG;
-    flags |= SYN_FLAG;
 
     if (get_state() != S_CONNECTING) {
         flags |= ACK_FLAG;
@@ -661,13 +654,9 @@ int send_syn(void) {
 int send_fin(void) {
     
     char *buf;
-    char flags = '\0';
+    char flags = PSH_FLAG | FIN_FLAG | ACK_FLAG;
     int retransmission_allowed = MAX_RETRANSMISSION;
     int result;
-  
-    flags |= PSH_FLAG;
-    flags |= FIN_FLAG;
-    flags |= ACK_FLAG;
 
     while (retransmission_allowed--) {
     
@@ -703,7 +692,7 @@ int send_fin(void) {
 int send_ack(void) {
 
     char *buf;
-    char flags = '\0';
+    char flags = PSH_FLAG | ACK_FLAG;
 
     flags |= PSH_FLAG;
     flags |= ACK_FLAG;
