@@ -312,6 +312,10 @@ int get_request(void) {
         /* byte by byte search for '\r' */
         while (length > 0) {
 
+            /* todo:
+               here's a bug. if the \r\n\r\n sequence is devided
+               over two chunks of tcp_read data we won't find
+               them... */
             if (request_buffer[request_buffer_size] == '\r') {
                 if ((length >= 4)
                     && (request_buffer[request_buffer_size+1] == '\n')

@@ -332,6 +332,10 @@ int get_response_header(void) {
         /* byte by byte search for '\r' */
         while (length > 0) {
 
+            /* todo:
+               here's a bug. if the \r\n\r\n sequence is devided
+               over two chunks of tcp_read data we won't find
+               them... */
             if (response_buffer[response_buffer_size] == '\r') {
                 if ((length >= 4)
                     && (response_buffer[response_buffer_size+1] == '\n')
