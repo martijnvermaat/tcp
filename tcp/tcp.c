@@ -20,19 +20,19 @@ typedef enum{
     S_TIME_WAIT, S_CLOSING, S_LAST_ACK
 } state_t;
 
-/* Events */
+/* Events causing state transitions*/
 typedef enum {
     E_SOCKET_OPEN, E_CONNECT, E_SYN_SENT, E_SYN_ACK_RECEIVED, E_LISTEN,
     E_SYN_RECEIVED, E_SYN_ACK_SENT, E_ACK_RECEIVED, E_ACK_TIME_OUT, E_CLOSE, 
     E_PARTNER_DEAD, E_FIN_RECEIVED
 } event_t;
 
-/* Prototypes */
+/* Procedure prototypes */
 int send_data(const char *buf, int len);
 int send_syn(void);
 int send_ack(void);
 int send_fin(void);
-int do_packet(void);
+void do_packet(void);
 void handle_ack(tcp_u8t flags, tcp_u32t ack_nr);
 void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size);
 void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip);
@@ -42,6 +42,8 @@ void clear_tcb(void);
 int wait_for_ack(void);
 int all_acks_received(void);
 void ack_these_bytes(int bytes_delivered);
+int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
+                    tcp_u16t src_port, tcp_u16t dst_port, int data_sz);
 
 tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len);
 void tcp_alarm(int sig);
@@ -122,9 +124,10 @@ static tcb_t tcb = {
     0,       /* unacked_data_len  */
     S_START, /* state             */
     0,       /* their_previous_seq_nr */
+    0,       /* their_previous_flags */
 };
 
-static int alarm_went_off = 0;   /* todo: <- in tcb? */
+static int alarm_went_off = 0; 
 
 
 
@@ -132,8 +135,6 @@ static int alarm_went_off = 0;   /* todo: <- in tcb? */
 /*      DEBUG HELPER FUNCTIONS         */
 /* ----------------------------------- */
 
-
-/* Print buffer content and some info */
 
 void print_buffer(void) {
 
@@ -178,7 +179,7 @@ void print_buffer(void) {
 /* ----------------------------------- */
 
 
-/* Initiates variables        */
+/* Calls ip_init()             */
 /* Returns 0, but -1 on error */
 
 int tcp_socket(void) {
@@ -201,19 +202,11 @@ int tcp_socket(void) {
     }
 
     declare_event(E_SOCKET_OPEN);
-
     tcb.our_ipaddr = my_ipaddr;
 
-    /*
-    tcb.their_seq_nr = 0;
-    tcb.rcvd_data_start = 0;
-    tcb.rcvd_data_size = 0;
-    alarm_went_off = 0;
-    */
-
     return 0;
-
 }
+
 
 
 int tcp_connect(ipaddr_t dst, int port) {
@@ -450,10 +443,10 @@ int tcp_write(const char *buf, int len){
 /* ----------------------------------- */
 
 
-int do_packet(void) {
+void do_packet(void) {
     ipaddr_t their_ip;
     tcp_u16t src_port, dst_port, win_sz;
-    tcp_u32t seq_nr, ack_nr;
+    tcp_u32t seq_nr, ack_nr, diff;
     tcp_u8t flags;
     char data[MAX_TCP_DATA];
     int data_sz = 0, rcvd;
@@ -464,11 +457,20 @@ int do_packet(void) {
 
     if (rcvd != -1) {
 
-        /* todo: check ack !! */    
-        if (tcb.state == S_LISTEN && (flags & SYN_FLAG)) {
+        /* only accept syn if packet is legal and state is LISTEN */    
+        if (tcb.state == S_LISTEN && 
+            (flags & SYN_FLAG) && 
+            !(flags & ACK_FLAG)) {
+            
             tcb.their_port = src_port;
         }
-    
+        
+        if (!packet_is_valid(seq_nr, ack_nr, flags, 
+                            src_port, dst_port, data_sz)) {
+            return;
+        }
+
+        /* only handle packet if it belongs to current socket */
         if (dst_port == tcb.our_port && src_port == tcb.their_port){
         
             handle_ack(flags, ack_nr);
@@ -481,8 +483,7 @@ int do_packet(void) {
             tcb.their_previous_flags = flags;
         }
     }
-    
-    return rcvd;
+
 }
 
 
@@ -513,26 +514,29 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
 
 void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
-    int fresh_data_start, fresh_data_size, 
-        size, first_size, free_buffer_space;
+    tcp_u32t fresh_data_start, fresh_data_size;
+    int size, first_chunk_size, free_buffer_space;
 
     if (data_size > 0 && tcb.rcvd_data_size < BUFFER_SIZE) {
 
         /* okay, we are able to store data */
-
         printf("handle data (size %d)\n", data_size);
         printf("incoming sequence number: %lu\n", seq_nr);
         printf("their current sequence number: %lu\n", tcb.their_seq_nr);
 
-        /* start byte of data that's new for us */
-        fresh_data_start = tcb.their_seq_nr - seq_nr;  /* shouldn't their_seq_nr be ack_nr? */
+        /* calculate start of data that's new to us */
+        /* do_packet guarantees that seq_nr is never ahead 
+           of tcb.their_seq_nr, i.e. that */
+        fresh_data_start = tcb.their_seq_nr - seq_nr;
         fresh_data_size = data_size - fresh_data_start;
 
-        if (fresh_data_size > 0  && tcb.their_seq_nr >= seq_nr) {
+        if (fresh_data_size > 0  && fresh_data_start <= MAX_TCP_DATA) {
 
             /* it is what we expect;
                - at least 1 byte we don't have yet
-               - and directly following the bytes we do have */
+               - and directly following the bytes we do have 
+                 (fresh_data_start is unsigned and would wrap 
+                  around if negative, and become greater than MAX_TCP_DATA)*/
 
             printf("Incomming data: %d bytes\n", data_size);
             fflush(stdout);
@@ -541,7 +545,7 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
             free_buffer_space = BUFFER_SIZE - tcb.rcvd_data_size;
             size = min(free_buffer_space, fresh_data_size);
 
-            printf("We use %d bytes of it starting at %d\n", size, fresh_data_start);
+            printf("We use %d bytes of it starting at %lu\n", size, fresh_data_start);
 
             /* now copy the data to our (circular) buffer */
 
@@ -557,19 +561,19 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
                 /* copy data to buffer and wrap at end of buffer if needed */
 
-                first_size = min(size, BUFFER_SIZE - (tcb.rcvd_data_start + tcb.rcvd_data_size));
+                first_chunk_size = min(size, BUFFER_SIZE - (tcb.rcvd_data_start + tcb.rcvd_data_size));
 
-                printf("Copying first chunk of %d bytes\n", first_size);
+                printf("Copying first chunk of %d bytes\n", first_chunk_size);
 
-                memcpy(&tcb.rcv_data[tcb.rcvd_data_start + tcb.rcvd_data_size], &data[fresh_data_start], first_size);
+                memcpy(&tcb.rcv_data[tcb.rcvd_data_start + tcb.rcvd_data_size], &data[fresh_data_start], first_chunk_size);
 
-                if (first_size < size) {
+                if (first_chunk_size < size) {
 
                     /* second chunck */
 
-                    printf("Copying second chunck of %d bytes\n", size - first_size);
+                    printf("Copying second chunck of %d bytes\n", size - first_chunk_size);
 
-                    memcpy(tcb.rcv_data, &data[fresh_data_start + first_size], size - first_size);
+                    memcpy(tcb.rcv_data, &data[fresh_data_start + first_chunk_size], size - first_chunk_size);
 
                 }
 
@@ -582,21 +586,17 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
                 tcb.rcvd_data_psh = tcb.rcvd_data_size;
             }
 
-            printf("\n%s: handle_data: size: %d\n",inet_ntoa(my_ipaddr),size);
-            printf("\n%s: handle_data: rcvd_data_size: %u\n",inet_ntoa(my_ipaddr),tcb.rcvd_data_size);
-
-            ack_these_bytes(size);
-/*
-  printf("\n\n");
-  print_buffer();
-  printf("\n\n");
-*/
+            /* increase the number of bytes we acked */
+            tcb.ack_nr += size;
+            /* actually send the ack */
+            send_ack();
 
         } else {
+        
             /* no fresh data, but we need to ack in case the last ack was lost*/
             if (tcb.their_previous_seq_nr == seq_nr) {
             /* we got a duplicate on our hands; send ack again*/
-                ack_these_bytes(0);
+                send_ack();
             }
         }
     }
@@ -689,8 +689,7 @@ int send_data(const char *buf, int len) {
     int bytes_sent = 0;
     char flags = PSH_FLAG | ACK_FLAG;
     int retransmission_allowed = MAX_RETRANSMISSION;
-    /*fprintf(stderr, "%s: send_data starts\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
+
     printf("%s sending data\n",inet_ntoa(my_ipaddr));
     fflush(stdout);
     while (retransmission_allowed--) {
@@ -702,8 +701,6 @@ int send_data(const char *buf, int len) {
             fflush(stderr);
             return -1;
         } else {
-            fprintf(stderr,"%s: %d bytes sent (seq %lu)\n", inet_ntoa(my_ipaddr), bytes_sent, tcb.our_seq_nr);
-            fflush(stderr);
             tcb.expected_ack = tcb.our_seq_nr + bytes_sent;
             tcb.unacked_data_len = bytes_sent;
         }
@@ -753,8 +750,6 @@ int send_syn(void) {
         
         /* wait for ack */          
         if (wait_for_ack() && tcb.state == S_ESTABLISHED){
-            /* todo: increase seq_nr on retransmission? */
-            /*tcb.our_seq_nr += 1;*/
             return 0;
         } else {
             declare_event(E_ACK_TIME_OUT);
@@ -815,7 +810,6 @@ int send_ack(void) {
     flags |= PSH_FLAG;
     flags |= ACK_FLAG;
 
-    printf("%s sending ack\n",inet_ntoa(my_ipaddr));
     return send_tcp_packet(tcb.their_ipaddr, tcb.our_port, 
             tcb.their_port, tcb.our_seq_nr, tcb.ack_nr, flags, 1, buf, 0);
 }
@@ -842,23 +836,51 @@ int wait_for_ack(void){
     return all_acks_received();
 }
 
+/* Check validity of ports, flags, seq nr and ack nr.
+   returns 0 on error, 1 on succes */ 
 
-void ack_these_bytes(int bytes_delivered) {
+int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
+                    tcp_u16t src_port, tcp_u16t dst_port, int data_sz) {
 
-    printf("%s acknr: %lx\n",inet_ntoa(my_ipaddr),tcb.ack_nr);
-    tcb.ack_nr += bytes_delivered;
-    printf("%s acknr: %lx\n",inet_ntoa(my_ipaddr),tcb.ack_nr);
-    send_ack();
-    printf("%s acked %d bytes\n",inet_ntoa(my_ipaddr),bytes_delivered);
-    fflush(stdout);
+    tcp_u32t diff;
+    
+    /* only accept packet if it belongs to current socket */
+    if (dst_port != tcb.our_port || src_port != tcb.their_port) {
+        return 0;
+    }
+    
+    /* check seq and ack only if this is not a syn packet */
+    if ( !(flags & SYN_FLAG) ) {
+    
+        diff = tcb.their_seq_nr - seq_nr;
+        if (diff >= MAX_TCP_DATA) {
+            /* invalid sequence number!! */
+            return 0;
+        }
+        /* is the compulsory ACK flag present? */
+        if ( !(flags & ACK_FLAG) ) {
+            return 0;
+        }
+        /* is this a reasonable acl number? */
+        diff = tcb.expected_ack - ack_nr;
+        if ( diff >= MAX_TCP_DATA ) {
+            return 0;
+        }
+    }    
+    
+    if (data_sz > MAX_TCP_DATA){
+        return 0;
+    }
+    
+    return 1;
 }
 
 
 void clear_tcb(void) {
-    tcb.our_ipaddr = my_ipaddr;
-    /* todo:
-      shouldn't we set our_seq_nr to 0 too?
-    */
+
+    /* fast forward dirty seq_nr if the last packet wasn't acked. */
+    tcb.our_seq_nr += tcb.unacked_data_len;
+    /* clear some variables */
     tcb.their_seq_nr = 0;
     tcb.their_ipaddr = 0;
     tcb.their_port = 0;
@@ -1006,6 +1028,7 @@ int all_acks_received(void) {
 /*         CONNECTIONLESS TIER         */
 /* ----------------------------------- */
 
+/* returns -1 on error */
 int send_tcp_packet(ipaddr_t dst, 
         tcp_u16t src_port,
         tcp_u16t dst_port, 
@@ -1019,14 +1042,10 @@ int send_tcp_packet(ipaddr_t dst,
     int bytes_sent;
     tcp_u32t tcp_sz, hdr_sz;
     tcp_hdr_t *tcp;
-	
     char segment[MAX_TCP_SEGMENT_LEN];
 
-    /*fprintf(stderr, "%s: send_tcp_packet starts:\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
     hdr_sz = sizeof(tcp_hdr_t);
     tcp_sz = hdr_sz + data_sz;
-    
     tcp = (tcp_hdr_t *) segment;
 
     tcp->src_port = htons(src_port);
@@ -1040,32 +1059,18 @@ int send_tcp_packet(ipaddr_t dst,
     tcp->urg_pointer = 0;
 
     memcpy(&segment[hdr_sz], data, data_sz);
-    /*
-    printf("\n || == %s is sending segment ==\n",inet_ntoa(my_ipaddr));
-    printf(" || seq_nr %lu\n",seq_nr);
-    printf(" || ack_nr %lu\n",ack_nr);
-    printf(" || checksum 0x%x\n",tcp->checksum);
-    printf(" || flags %u\n\n",tcp->flags);
-    */
-    tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
-    tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
-    if (tcp->checksum != 0) { 
-        fprintf(stderr,"%s: checksum error: 0x%x\n", inet_ntoa(my_ipaddr),tcp->checksum );
-    }
+    
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
 
-
-    /*    fprintf(stderr, "%s: sending over ip: %d\n",inet_ntoa(my_ipaddr),tcp_sz);
-    fflush(stderr);*/
     bytes_sent = ip_send(dst,IP_PROTO_TCP, 2, tcp, tcp_sz );
-    /*fprintf(stderr, "%s: bytes sent: %d\n",inet_ntoa(my_ipaddr),bytes_sent);
-    fflush(stderr);*/
+
     if (bytes_sent == -1) {
         return -1;
     } else {
         return bytes_sent - hdr_sz;
     }
 }
+
 
 
 int recv_tcp_packet(ipaddr_t *src_ip, 
