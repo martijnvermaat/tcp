@@ -284,14 +284,15 @@ int write_header(char *buffer, http_header header, char *value) {
 
     char *header_string;
 
-    if (header == HEADER_CONTENT_TYPE) {
-        header_string = "Content-Type";
-    } else if (header == HEADER_SERVER) {
-        header_string = "Server";
-    } else if (header == HEADER_ISLAND) {
-        header_string = "Nice-Island";
-    } else {
-        return 0;
+    switch (header) {
+        case HEADER_CONTENT_TYPE:
+            header_string = "Content-Type";
+        case HEADER_SERVER:
+            header_string = "Server";
+        case HEADER_ISLAND:
+            header_string = "Nice-Island";
+        default:
+            return 0;
     }
 
     return sprintf(buffer, "%s: %s\r\n", header_string, value);
