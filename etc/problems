@@ -6,3 +6,7 @@ anders wordt de ack afgekeurd.
 ontvangen en te acken. Anders volgt een time out aan de andere kant.
 documentatie:
 handle_ack moet ook flags meekrijgen
+checksum controleren bij bitpattern groter dan 127 (let op 131)
+free() na aanroepen ip_receive en ip_send()
+options testen
+gebruik signal en alarm in testprogrammaatjes
