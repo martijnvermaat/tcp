@@ -51,7 +51,6 @@ int deliver_received_bytes(char *buf, int maxlen);
 
 int min(int x, int y);
 int max(int x, int y);
-void print_bits(char c);
     
 
 /* TCP control block */
@@ -127,49 +126,6 @@ static tcb_t tcb = {
 };
 
 static int alarm_went_off = 0; 
-
-
-
-/* ----------------------------------- */
-/*      DEBUG HELPER FUNCTIONS         */
-/* ----------------------------------- */
-
-
-void print_buffer(void) {
-
-    /*
-      This function prints entire buffer space by
-      using dots (.) for unused buffer space.
-      Don't rewrite this function to only print
-      used buffer space, as the current way might
-      just be usefull for debugging.
-    */
-
-    int i;
-    
-    printf("\n\nBuffer contains %d/%d bytes starting at %d\n", tcb.rcvd_data_size, BUFFER_SIZE, tcb.rcvd_data_start);
-    printf("Of this, %d bytes have to be pushed\n", tcb.rcvd_data_psh);
-    printf("Buffer contains:\n\n");
-    
-    for (i=0; i<BUFFER_SIZE; i++) {
-
-        if (i >= tcb.rcvd_data_start && i < tcb.rcvd_data_start + tcb.rcvd_data_size) {
-            putchar(tcb.rcv_data[i]);
-        } else if (tcb.rcvd_data_start + tcb.rcvd_data_size > BUFFER_SIZE
-                   && i < tcb.rcvd_data_start
-                   && i < tcb.rcvd_data_size - (BUFFER_SIZE - tcb.rcvd_data_start)
-            ) {
-            putchar(tcb.rcv_data[i]);
-        } else {
-            putchar('.');
-        }
-
-    }
-
-    printf("\n\n");
-    fflush(stdout);
-
-}
 
 
 
@@ -280,7 +236,8 @@ int tcp_read(char *buf, int maxlen) {
         tcb.state != S_FIN_WAIT_2 &&
         tcb.state != S_CLOSING &&
         tcb.state != S_CLOSE_WAIT &&
-        tcb.state != S_LAST_ACK ) {
+        tcb.state != S_LAST_ACK &&
+        tcb.state != S_CLOSED) {
         
         /* if not in one of these states, tcp_read is not willing to help */
         return -1;
@@ -408,16 +365,14 @@ int tcp_write(const char *buf, int len){
         data_sz = min(MAX_TCP_DATA, bytes_left);
 
         bytes_sent = send_data(buf_pointer, data_sz);
-        /*fprintf(stderr,"%s: tcp_write: send_data() returned: data_sz:%d \n",inet_ntoa(my_ipaddr),bytes_sent);
-        fflush(stderr);*/
+        
         if (bytes_sent == -1) {break;}
         
         buf_pointer += bytes_sent;
         bytes_left -= bytes_sent;
         
     }
-    /*fprintf(stderr,"%s: tcp_write is going to stop: bytes_left:%d \n",inet_ntoa(my_ipaddr),bytes_left);
-    fflush(stderr);*/
+    
     if (bytes_left == len) {
         /* will also happen if len=0*/
         return -1;
@@ -457,6 +412,7 @@ void do_packet(void) {
         
         if (!packet_is_valid(seq_nr, ack_nr, flags, 
                             src_port, dst_port, data_sz)) {
+
             return;
         }
 
@@ -640,14 +596,11 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
 void handle_fin(tcp_u8t flags, tcp_u32t seq_nr) {
     int s;
     if (FIN_FLAG & flags) {
+        
         s = tcb.state;
-        printf("\n%s: fin received\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
+        
         if (s == S_ESTABLISHED || s == S_FIN_WAIT_1 || s == S_FIN_WAIT_2) {
-            printf("%s: fin accepted\n",inet_ntoa(my_ipaddr));
-            fflush(stdout);
-
-            /* todo: received sequence number may be invalid */
+        
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
             send_ack();
@@ -680,16 +633,13 @@ int send_data(const char *buf, int len) {
     char flags = PSH_FLAG | ACK_FLAG;
     int retransmission_allowed = MAX_RETRANSMISSION;
 
-    printf("%s sending data\n",inet_ntoa(my_ipaddr));
-    fflush(stdout);
     while (retransmission_allowed--) {
         bytes_sent = send_tcp_packet(tcb.their_ipaddr, tcb.our_port, 
             tcb.their_port, tcb.our_seq_nr, tcb.ack_nr, flags, 1, buf, len);
 
         if(bytes_sent == -1){
-            fprintf(stderr,"no bytes sent");
-            fflush(stderr);
             return -1;
+
         } else {
             tcb.expected_ack = tcb.our_seq_nr + bytes_sent;
             tcb.unacked_data_len = bytes_sent;
@@ -729,7 +679,7 @@ int send_syn(void) {
         if(result == -1){
             return -1;
         } else {
-            printf("\n %s sent syn packet, seq %lu\n",inet_ntoa(my_ipaddr),tcb.our_seq_nr); 
+        
             tcb.expected_ack = tcb.our_seq_nr + 1;
             if (flags & ACK_FLAG) {
                 declare_event(E_SYN_ACK_SENT);
@@ -773,7 +723,6 @@ int send_fin(void) {
         if(result == -1){
             return -1;
         } else {
-            fprintf(stdout,"\n %s sent fin packet, seq %lu\n",inet_ntoa(my_ipaddr),tcb.our_seq_nr); 
             tcb.expected_ack = tcb.our_seq_nr + 1;
         }
         
@@ -854,7 +803,7 @@ int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
         }
         /* is this a reasonable ack number? */
         diff = tcb.expected_ack - ack_nr;
-        if ( diff >= MAX_TCP_DATA ) {
+        if ( diff > MAX_TCP_DATA ) {
             return 0;
         }
     }
@@ -863,7 +812,7 @@ int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
     if ( !(flags & SYN_FLAG) ) {
     
         diff = tcb.their_seq_nr - seq_nr;
-        if (diff >= MAX_TCP_DATA) {
+        if (diff > MAX_TCP_DATA) {
             /* invalid sequence number!! */
             return 0;
         }
@@ -871,15 +820,16 @@ int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
         if ( !(flags & ACK_FLAG) ) {
             return 0;
         }
+        
         /* is this a reasonable ack number? */
         diff = tcb.expected_ack - ack_nr;
-        if ( diff >= MAX_TCP_DATA ) {
+        if ( diff > MAX_TCP_DATA ) {
             return 0;
         }    
     } 
     
     
-    /* de don't handle data in a syn/fin packet */
+    /* we don't handle data in a syn/fin packet */
     if ( (flags & SYN_FLAG) || (flags & FIN_FLAG) ) {
         if (data_sz > 0) {
             return 0;
@@ -911,8 +861,6 @@ void clear_tcb(void) {
 
 void tcp_alarm(int sig){
     alarm_went_off = 1;
-    fprintf(stderr,"%s: tcp_alarm went of\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);
 }
 
 
@@ -926,8 +874,6 @@ void declare_event(event_t e) {
 
     if (s == S_START && e == E_SOCKET_OPEN) {
         tcb.state = S_CLOSED;
-        printf("%s: Event: E_SOCKET_OPEN, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
 
     } else if (e == E_SOCKET_OPEN) {
         /* reset connection */
@@ -936,98 +882,61 @@ void declare_event(event_t e) {
         
     } else if (s == S_CLOSED && e == E_CONNECT) {
         tcb.state = S_CONNECTING;
-        printf("%s: Event: E_CONNECT, State to S_CONNECTING\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (s == S_CLOSED && e == E_LISTEN) {
         tcb.state = S_LISTEN;
-        printf("%s: Event: E_LISTEN, State to S_LISTEN\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
 
     } else if (s == S_CONNECTING && e == E_SYN_SENT) {
         tcb.state = S_SYN_SENT;
-        printf("%s: Event: E_SYN_SENT, State to S_SYN_SENT\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (s == S_SYN_SENT && e == E_SYN_ACK_RECEIVED) {
-        /* I think we could just use E_ACK_RECEIVED here instead of a 'special' transition */
         tcb.state = S_ESTABLISHED;
-        printf("%s: Event: E_SYN_ACK_RECEIVED, State to S_ESTABLISHED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
 
     } else if (s == S_SYN_SENT && e == E_ACK_TIME_OUT) {
         tcb.state = S_CONNECTING;
-        printf("%s: Event: E_ACK_TIME_OUT, State to S_CONNECTING\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (s == S_LISTEN && e == E_SYN_RECEIVED) {
         tcb.state = S_SYN_RECEIVED;
-        printf("%s: Event: E_SYN_RECEIVED, State to S_SYN_RECEIVED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (s == S_SYN_RECEIVED && e == E_SYN_ACK_SENT) {
         tcb.state = S_SYN_ACK_SENT;
-        printf("%s: Event: E_SYN_ACK_SENT, State to S_SYN_ACK_SENT\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
 
     } else if (s == S_SYN_ACK_SENT && e == E_ACK_RECEIVED) {
         tcb.state = S_ESTABLISHED;
-        printf("%s: Event: E_ACK_RECEIVED, State to S_ESTABLISHED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
 
     } else if (s == S_SYN_ACK_SENT && e == E_ACK_TIME_OUT) {
         tcb.state = S_SYN_RECEIVED;
-        printf("%s: Event: E_ACK_TIME_OUT, State to S_SYN_RECEIVED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout); 
 
     } else if (s == S_ESTABLISHED && e == E_CLOSE) {
         tcb.state = S_FIN_WAIT_1;
-        printf("%s: Event: E_CLOSE, State to S_FIN_WAIT_1\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
 
     } else if (s == S_FIN_WAIT_1 && e == E_FIN_RECEIVED) {
         tcb.state = S_CLOSING;
-        printf("%s: Event: E_FIN_RECEIVED, State to S_CLOSING\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (s == S_FIN_WAIT_1 && e == E_ACK_RECEIVED) {
         tcb.state = S_FIN_WAIT_2;
-        printf("%s: Event: E_ACK_RECEIVED, State to S_FIN_WAIT_2\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
   
     } else if (s == S_FIN_WAIT_2 && e == E_FIN_RECEIVED) {
         tcb.state = S_CLOSED;
         clear_tcb();
-        printf("%s: Event: E_FIN_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (s == S_ESTABLISHED && e == E_FIN_RECEIVED) {
         tcb.state = S_CLOSE_WAIT;    
-        printf("%s: Event: E_FIN_RECEIVED, State to S_CLOSE_WAIT\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (s == S_CLOSING && e == E_ACK_RECEIVED) {
         tcb.state = S_CLOSED;
         clear_tcb();
-        printf("%s: Event: E_ACK_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
     
     } else if (s == S_CLOSE_WAIT && e == E_CLOSE) {
         tcb.state = S_LAST_ACK;
-        printf("%s: Event: E_CLOSE, State to S_LAST_ACK\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
      
     } else if (s == S_LAST_ACK && e == E_ACK_RECEIVED) {
         tcb.state = S_CLOSED;
         clear_tcb();
-        printf("%s: Event: E_ACK_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else if (e == E_PARTNER_DEAD) {
         tcb.state = S_CLOSED;
         clear_tcb();
-        printf("%s: Event: E_PARTNER_DEAD, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);
         
     } else {
         error = 1;
@@ -1164,8 +1073,6 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
 
     /*assemble pseudoheader*/
     pseudo_hdr_t pseudo_hdr;
-    /*fprintf(stderr, "%s: tcp_checksum starts\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
     pseudo_hdr.src = (src);
     pseudo_hdr.dst = (dst);
     pseudo_hdr.zero = 0;
@@ -1184,8 +1091,6 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
         }
     }
 
-    /*fprintf(stderr, "%s: checksum: peudo header calculated\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
 
     /* add sum of one complements over segment */
     count = len >> 1;    
@@ -1195,11 +1100,7 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
             sum -= oneword;
             sum++;
         }
-    }
-    
-    /*fprintf(stderr, "%s checksum: header + data calculated\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
-        
+    }        
     
     /* possibly add the last byte */
     if (len & 1) {
@@ -1225,57 +1126,3 @@ int max(int x, int y) {
     return ((x) > (y) ? (x) : (y));
 }
 
-void print_bits(char c) {
-    char byte;
-    void *output;
-    byte = 0x80;
-    output = stdout;
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-    byte = 0x40;
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-    byte = 0x20;
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-    byte = 0x10;
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-    byte = 0x08;
-    fprintf(output,".");
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-    byte = 0x04;
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-    byte = 0x02;
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-    byte = 0x01;
-    if (byte & c) {
-        fprintf(output, "1");
-    } else {
-        fprintf(output, "0");
-    }
-}
