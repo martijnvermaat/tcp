@@ -12,17 +12,15 @@ echo "Starting automated tests" > $OUTPUT
 echo `date` >> $OUTPUT
 echo >> $OUTPUT
 
-echo "* Test compile.c" >> $OUTPUT
-./compile > /dev/null 2>> $OUTPUT
-echo >> $OUTPUT
+for i in $( ls build/ ); do
 
-echo "* Test handshake.c" >> $OUTPUT
-./handshake 1>/dev/null 2>> $OUTPUT
-echo >> $OUTPUT
+    echo "* Test $i.c" >> $OUTPUT
+    build/$i > /dev/null 2>> $OUTPUT ; sleep .2
+    echo >> $OUTPUT
 
-echo "* Test basic.c" >> $OUTPUT
-./basic 1>/dev/null 2>> $OUTPUT
-echo >> $OUTPUT
+done
 
 echo `date` >> $OUTPUT
 echo "Completed automated tests" >> $OUTPUT
+
+cat $OUTPUT
