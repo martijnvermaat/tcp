@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
     char *eth, *ip1, *ip2;
 
     if (argc < 2) {
-        printf("No www dir specified.\n");
+        printf("No www directory found.\nUsage: %s wwwdir\n", argv[0]);
         return 1;
     }
 
