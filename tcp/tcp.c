@@ -38,7 +38,6 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size);
 void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip);
 void handle_fin(tcp_u8t flags, tcp_u32t seq_nr);
 void declare_event(event_t e);
-state_t get_state(void);
 void clear_tcb(void);
 int wait_for_ack(void);
 int all_acks_received(void);
@@ -188,7 +187,7 @@ int tcp_socket(void) {
     void (*oldsig)(int);
     unsigned old_timo;
 
-    if (get_state() != S_START) {
+    if (tcb.state != S_START) {
         return -1;
     }
 
@@ -217,7 +216,7 @@ int tcp_socket(void) {
 
 int tcp_connect(ipaddr_t dst, int port) {
 
-    if (get_state() != S_CLOSED) {
+    if (tcb.state != S_CLOSED) {
         return -1;
     }
 
@@ -235,13 +234,13 @@ int tcp_listen(int port, ipaddr_t *src) {
     void (*oldsig)(int);
     unsigned oldtimo;
     
-    if (get_state() != S_CLOSED) {
+    if (tcb.state != S_CLOSED) {
         return -1;
     }
 
-    /*todo: can't we obtain the client's port dynamically? */
-    tcb.their_port = CLIENT_PORT;
     tcb.our_port = port;
+    /* we don't know their port yet */
+    tcb.their_port = 0;
     
     /* reset alarm_went_of */
     alarm_went_of = 0;
@@ -249,11 +248,11 @@ int tcp_listen(int port, ipaddr_t *src) {
     oldsig = signal(SIGALRM, tcp_alarm);
 
     declare_event(E_LISTEN);
-    while (alarm_went_of == 0 && get_state() != S_ESTABLISHED) {
+    while (alarm_went_of == 0 && tcb.state != S_ESTABLISHED) {
         do_packet();
-        if (get_state() == S_SYN_RECEIVED) {
+        if (tcb.state == S_SYN_RECEIVED) {
             send_syn();
-            if (get_state() != S_ESTABLISHED) {
+            if (tcb.state != S_ESTABLISHED) {
                 printf("niet gelukt! laatste ack niet gekregen in 3 way HS\n");
                 return -1;
             }
@@ -275,8 +274,8 @@ int tcp_listen(int port, ipaddr_t *src) {
 
 int tcp_close(void){
 
-    if (get_state() != S_ESTABLISHED
-        && get_state() != S_CLOSE_WAIT) {
+    if (tcb.state != S_ESTABLISHED
+        && tcb.state != S_CLOSE_WAIT) {
         return -1;
     }
 
@@ -297,9 +296,9 @@ int tcp_read(char *buf, int maxlen) {
 
     /* print_buffer();*/
 
-    if (get_state() != S_ESTABLISHED
-        && get_state() != S_FIN_WAIT_1
-        && get_state() != S_FIN_WAIT_2) {
+    if (tcb.state != S_ESTABLISHED
+        && tcb.state != S_FIN_WAIT_1
+        && tcb.state != S_FIN_WAIT_2) {
         return -1;
     }
 
@@ -363,25 +362,25 @@ int tcp_write(const char *buf, int len){
     bytes_left = len;
     buf_pointer = (char *) buf;
 
-    if (get_state() != S_ESTABLISHED) {
+    if (tcb.state != S_ESTABLISHED) {
         return -1;
     }
 
     while (bytes_left) {
-        /*fprintf(stdout,"\n");*/
+        /*fprintf(stderr,"\n");*/
         data_sz = min(MAX_TCP_DATA, bytes_left);
 
         bytes_sent = send_data(buf_pointer, data_sz);
-        /*fprintf(stdout,"%s: tcp_write: send_data() returned: data_sz:%d \n",inet_ntoa(my_ipaddr),bytes_sent);
-        fflush(stdout);*/
+        /*fprintf(stderr,"%s: tcp_write: send_data() returned: data_sz:%d \n",inet_ntoa(my_ipaddr),bytes_sent);
+        fflush(stderr);*/
         if (bytes_sent == -1) {break;}
         
         buf_pointer += bytes_sent;
         bytes_left -= bytes_sent;
         
     }
-    /*fprintf(stdout,"%s: tcp_write is going to stop: bytes_left:%d \n",inet_ntoa(my_ipaddr),bytes_left);
-    fflush(stdout);*/
+    /*fprintf(stderr,"%s: tcp_write is going to stop: bytes_left:%d \n",inet_ntoa(my_ipaddr),bytes_left);
+    fflush(stderr);*/
     if (bytes_left == len) {
         /* will also happen if len=0*/
         return -1;
@@ -407,6 +406,11 @@ int do_packet(void) {
 
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
+
+    if (tcb.state == S_LISTEN) {
+        tcb.their_port = src_port;
+    }
+    
     if (rcvd != -1 && dst_port == tcb.our_port && src_port == tcb.their_port){
     
         handle_ack(flags, ack_nr);
@@ -437,21 +441,12 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
         tcb.our_seq_nr = ack_nr;
         tcb.unacked_data_len = 0;
 
-        if (get_state() == S_ESTABLISHED) {return;}
+        if (tcb.state == S_ESTABLISHED) {return;}
 
-        if (get_state() == S_SYN_ACK_SENT) {
-
-            declare_event(E_ACK_RECEIVED);
-
-        } else if (get_state() == S_FIN_WAIT_1) {
-
-            declare_event(E_ACK_RECEIVED);
-
-        } else if (get_state() == S_LAST_ACK) {
-
-            declare_event(E_ACK_RECEIVED);
-
-        } else if (get_state() == S_CLOSING) {
+        if (tcb.state == S_SYN_ACK_SENT ||
+            tcb.state == S_FIN_WAIT_1 ||
+            tcb.state == S_LAST_ACK ||
+            tcb.state == S_CLOSING) {
 
             declare_event(E_ACK_RECEIVED);
         }
@@ -561,10 +556,10 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
     if (!(SYN_FLAG & flags)){
         return;
     }
-    /*fprintf(stdout,"%s syn received\n",inet_ntoa(my_ipaddr)); 
-    fflush(stdout);*/
+    /*fprintf(stderr,"%s syn received\n",inet_ntoa(my_ipaddr)); 
+    fflush(stderr);*/
 
-    if (get_state() == S_LISTEN) {
+    if (tcb.state == S_LISTEN) {
         tcb.their_ipaddr = their_ip;
         /*printf(" from %s\n",inet_ntoa(their_ip));
         fflush(stdout);*/
@@ -575,7 +570,7 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
         /* send_syn will be called by tcp_listen */
 
 
-    } else if (get_state() == S_SYN_SENT) {
+    } else if (tcb.state == S_SYN_SENT) {
 
         if (all_acks_received()) {
             fflush(stdout);
@@ -587,7 +582,7 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
             send_ack();
         }
         
-    } else if (get_state() == S_ESTABLISHED) {
+    } else if (tcb.state == S_ESTABLISHED) {
         
         if ( (tcb.their_previous_seq_nr == seq_nr) &&
              (tcb.their_previous_flags & SYN_FLAG) ) {
@@ -602,7 +597,7 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
 void handle_fin(tcp_u8t flags, tcp_u32t seq_nr) {
     int s;
     if (FIN_FLAG & flags) {
-        s = get_state();
+        s = tcb.state;
         printf("\n%s: fin received\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
         if (s == S_ESTABLISHED || s == S_FIN_WAIT_1 || s == S_FIN_WAIT_2) {
@@ -613,7 +608,9 @@ void handle_fin(tcp_u8t flags, tcp_u32t seq_nr) {
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
             send_ack();
+            
         } else if (s == S_CLOSE_WAIT || s == S_LAST_ACK) {
+        
             /* we already received a fin; let's see if it's a duplicate */
             if ( (tcb.their_previous_seq_nr == seq_nr) &&
                  (tcb.their_previous_flags & FIN_FLAG) ) {
@@ -638,8 +635,8 @@ int send_data(const char *buf, int len) {
     int bytes_sent = 0;
     char flags = PSH_FLAG | ACK_FLAG;
     int retransmission_allowed = MAX_RETRANSMISSION;
-    /*fprintf(stdout, "%s: send_data starts\n",inet_ntoa(my_ipaddr));
-    fflush(stdout);*/
+    /*fprintf(stderr, "%s: send_data starts\n",inet_ntoa(my_ipaddr));
+    fflush(stderr);*/
     printf("%s sending data\n",inet_ntoa(my_ipaddr));
     fflush(stdout);
     while (retransmission_allowed--) {
@@ -647,12 +644,12 @@ int send_data(const char *buf, int len) {
             tcb.their_port, tcb.our_seq_nr, tcb.ack_nr, flags, 1, buf, len);
 
         if(bytes_sent == -1){
-            fprintf(stdout,"no bytes sent");
-            fflush(stdout);
+            fprintf(stderr,"no bytes sent");
+            fflush(stderr);
             return -1;
         } else {
-            fprintf(stdout,"%s: %d bytes sent (seq %lu)\n", inet_ntoa(my_ipaddr), bytes_sent, tcb.our_seq_nr);
-            fflush(stdout);
+            fprintf(stderr,"%s: %d bytes sent (seq %lu)\n", inet_ntoa(my_ipaddr), bytes_sent, tcb.our_seq_nr);
+            fflush(stderr);
             tcb.expected_ack = tcb.our_seq_nr + bytes_sent;
             tcb.unacked_data_len = bytes_sent;
         }
@@ -678,7 +675,7 @@ int send_syn(void) {
     int retransmission_allowed = MAX_RETRANSMISSION;
     int result;
 
-    if (get_state() != S_CONNECTING) {
+    if (tcb.state != S_CONNECTING) {
         flags |= ACK_FLAG;
     }
 
@@ -702,7 +699,7 @@ int send_syn(void) {
         }
         
         /* wait for ack */          
-        if (wait_for_ack() && get_state() == S_ESTABLISHED){
+        if (wait_for_ack() && tcb.state == S_ESTABLISHED){
             /* todo: increase seq_nr on retransmission? */
             /*tcb.our_seq_nr += 1;*/
             return 0;
@@ -743,7 +740,7 @@ int send_fin(void) {
         }
         
         /* wait for ack */          
-        if (wait_for_ack() && get_state() != S_FIN_WAIT_1){
+        if (wait_for_ack() && tcb.state != S_FIN_WAIT_1){
             return 0;
         }
     }
@@ -822,8 +819,8 @@ void clear_tcb(void) {
 
 void tcp_alarm(int sig){
     alarm_went_of = 1;
-    fprintf(stdout,"%s: tcp_alarm went of\n",inet_ntoa(my_ipaddr));
-    fflush(stdout);
+    fprintf(stderr,"%s: tcp_alarm went of\n",inet_ntoa(my_ipaddr));
+    fflush(stderr);
 }
 
 
@@ -951,11 +948,6 @@ void declare_event(event_t e) {
 
 
 
-state_t get_state(void){
-    return tcb.state;
-}
-
-
 int all_acks_received(void) { 
     return tcb.our_seq_nr == tcb.expected_ack;
 }
@@ -980,8 +972,8 @@ int send_tcp_packet(ipaddr_t dst,
 	
     char segment[MAX_TCP_SEGMENT_LEN];
 
-    /*fprintf(stdout, "%s: send_tcp_packet starts:\n",inet_ntoa(my_ipaddr));
-    fflush(stdout);*/
+    /*fprintf(stderr, "%s: send_tcp_packet starts:\n",inet_ntoa(my_ipaddr));
+    fflush(stderr);*/
     hdr_sz = sizeof(tcp_hdr_t);
     tcp_sz = hdr_sz + data_sz;
     
@@ -1008,16 +1000,16 @@ int send_tcp_packet(ipaddr_t dst,
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     if (tcp->checksum != 0) { 
-        fprintf(stdout,"%s: checksum error: 0x%x\n", inet_ntoa(my_ipaddr),tcp->checksum );
+        fprintf(stderr,"%s: checksum error: 0x%x\n", inet_ntoa(my_ipaddr),tcp->checksum );
     }
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
 
 
-    /*    fprintf(stdout, "%s: sending over ip: %d\n",inet_ntoa(my_ipaddr),tcp_sz);
-    fflush(stdout);*/
+    /*    fprintf(stderr, "%s: sending over ip: %d\n",inet_ntoa(my_ipaddr),tcp_sz);
+    fflush(stderr);*/
     bytes_sent = ip_send(dst,IP_PROTO_TCP, 2, tcp, tcp_sz );
-    /*fprintf(stdout, "%s: bytes sent: %d\n",inet_ntoa(my_ipaddr),bytes_sent);
-    fflush(stdout);*/
+    /*fprintf(stderr, "%s: bytes sent: %d\n",inet_ntoa(my_ipaddr),bytes_sent);
+    fflush(stderr);*/
     if (bytes_sent == -1) {
         return -1;
     } else {
@@ -1094,8 +1086,8 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
 
     /*assemble pseudoheader*/
     pseudo_hdr_t pseudo_hdr;
-    /*fprintf(stdout, "%s: tcp_checksum starts\n",inet_ntoa(my_ipaddr));
-    fflush(stdout);*/
+    /*fprintf(stderr, "%s: tcp_checksum starts\n",inet_ntoa(my_ipaddr));
+    fflush(stderr);*/
     pseudo_hdr.src = (src);
     pseudo_hdr.dst = (dst);
     pseudo_hdr.zero = 0;
@@ -1114,8 +1106,8 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
         }
     }
 
-    /*fprintf(stdout, "%s: checksum: peudo header calculated\n",inet_ntoa(my_ipaddr));
-    fflush(stdout);*/
+    /*fprintf(stderr, "%s: checksum: peudo header calculated\n",inet_ntoa(my_ipaddr));
+    fflush(stderr);*/
 
     /* add sum of one complements over segment */
     count = len >> 1;    
@@ -1127,8 +1119,8 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
         }
     }
     
-    /*fprintf(stdout, "%s checksum: header + data calculated\n",inet_ntoa(my_ipaddr));
-    fflush(stdout);*/
+    /*fprintf(stderr, "%s checksum: header + data calculated\n",inet_ntoa(my_ipaddr));
+    fflush(stderr);*/
         
     
     /* possibly add the last byte */

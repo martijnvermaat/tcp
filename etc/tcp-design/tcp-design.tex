@@ -211,11 +211,11 @@ int tcp_socket() {
 
 \subsection{State tier}
 
-
 As we did in the previous section for the connection-ori\"ented tier, we
 will describe most procedures of the state tier in this section, again by
 using pseudo-code.
 First, we will give an overview of the most important decisions that we made.
+
 
 \subsubsection{Design decisions}
 
@@ -223,7 +223,7 @@ First, we will give an overview of the most important decisions that we made.
 \paragraph{Buffer for incoming data}
     The buffer for incoming data is bigger than the maximum payload of a tcp
     packet. This is necessary because new data might come in while for example 
-    \verb|tcp\_write()| is polling for ack's. These data must be stored in the 
+    \verb|tcp_write()| is polling for ack's. These data must be stored in the 
     buffer; 
     there is no way we can deliver it to the user.
     The buffer is circular because this prevents shoving of data to the begin of 
@@ -236,30 +236,30 @@ First, we will give an overview of the most important decisions that we made.
     We don't assume that every incoming packet has the PSH flag set, eventhough 
     the assignment prescribes to set PSH on all outbound packets. That we do
     check the PHS flag means 
-    that if it is set, \verb|tcp\_read()| delivers is the data immediately.
-    Only if there is no data to be pushed, \verb|tcp\_read()| keeps on polling 
+    that if it is set, \verb|tcp_read()| delivers is the data immediately.
+    Only if there is no data to be pushed, \verb|tcp_read()| keeps on polling 
     ip for 
     more data until the amount of data specified by the user is received.
     
-    \verb|tcp\_read()| might return less (if the \verb|PSH| flag is set), but 
+    \verb|tcp_read()| might return less (if the \verb|PSH| flag is set), but 
     the \verb|PSH| flag 
-    will never cause \verb|tcp\_read()| to return more 
+    will never cause \verb|tcp_read()| to return more 
     data than indicated by the users parameter.
     
     To keep track of the number of bytes that need to be pushed, a variable is 
-    added to the tcb: \verb|rcvd\_data\_push|.
+    added to the tcb: \verb|rcvd_data_push|.
 
 \paragraph{Acknowledgements}
     If data comes in tcp has never seen before (i.e. fresh data), an 
     acknowledgement is send
-    immediately by \verb|handle\_data()|. In real tcp implementations sending of
+    immediately by \verb|handle_data()|. In real tcp implementations sending of
      ack's 
     should be postponed until the data is actually delivered to the user, 
     but since the assignment prescribes to use a window of size 1, we have to 
     acknowledge each packet instantly.
 
 \paragraph{Connection establishment}
-    After the first \verb|syn| is sent, the state transits to \verb|SYN\_SENT| 
+    After the first \verb|syn| is sent, the state transits to \verb|SYN_SENT| 
     and we wait for the \verb|syn+ack| response. In this state, only 
     \verb|syn+ack| packets will be accepted. If a packet arrives that carries an
     acknowledgement, but no \verb|syn|,...
@@ -267,7 +267,36 @@ First, we will give an overview of the most important decisions that we made.
     negeren we dit packet. De SYN, waar we  op wachten, moet toch de
     verplichte ACK bevatten. Als het syn+ack packet niet binnen 1 seconde
     arriveert, dan gaat de state naar CLOSED, daarna wordt de syn opnieuw
-    verstuurt. De state gaat dan weer terug naar SYN_SENT.
+    verstuurt. De state gaat dan weer terug naar \verb|SYN_SENT|.
+    
+\paragraph{State transitions}
+    The \verb|declare_event()| procedure performs all necessary state 
+    transitions, based on the event that is passed as a parameter to this 
+    procedure. For example, 
+    is the state is \verb|S_LISTEN| and a \verb|syn| is received, 
+    \verb|E_SYN_RECEIVED| is passed to \verb|declare_event()|. The state will 
+    then be altered to \verb|S_SYN_RECEIVED|. In this way, \verb|declare_event()| directly implements the state 
+    transition diagrams shown in appendix A.
+    
+    There is a trade-off here between straightforward source code and source 
+    code that has some build in bug-detection, which are both preferable. If we 
+    had chosen for straightforward code, we had \verb|declare_event()| swallow
+    every event that takes place. For example \verb|handle_ack()| would then 
+    consist of only one line: 
+    \verb|if (ack_flag) {declare_event(E_ACK_RECEIVED)}|. Then we leave it to 
+    \verb|declare_event| to decide if a state transition is necessary.
+    On the other hand, if
+    some unexpected event happens, we wouldn't notice, because 
+    \verb|declare_event()| gracefully discards the event, without any warning.
+    
+    To make it easier to detect unexpected events (caused by a bug), we decided 
+    to make \verb|declare_event| accept only the events that are defined in the
+    state transition diagram. On all other events it starts to yell (on the 
+    screen). The consequence is that some code is a little bit more complex, 
+    because we can't just say \verb|declare_event(E_ACK_RECEIVED)|
+    on every incoming ack. We first have to check whether this ack event may 
+    declared for a state transition.
+    
 \subsubsection{State-tier Pseudocode}
 
 

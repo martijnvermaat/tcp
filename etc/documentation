@@ -16,7 +16,8 @@ Design decision:
     operating system, the user's signal handler is called by the tcp library and 
     the blocking call returns. In case of tcp_read(), the bytes that were 
     already received are delivered to the user.
-    
+
 Let erop dat er geen ack wordt gestuurd door handle_data() als er geen data in het packet zit!
 Let erop dat ip adres van afzender gelijk blijft tijdens connection.
 we assume data will not be fragmented in another way when it is resent.
+
