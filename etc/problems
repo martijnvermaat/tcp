@@ -1,0 +1,8 @@
+* memcpy onnodig in send_tcp_packet
+* wat is de beste manier om te checken of een ack binnen is? send-data()
+handle_ack if statement veranderd. ack mag alleen gelijk zijn aan expected_ack, 
+anders wordt de ack afgekeurd.
+* Na active tcp_close() moet tcp_read aangeroepen worden om de laatste fin te 
+ontvangen en te acken. Anders volgt een time out aan de andere kant.
+documentatie:
+handle_ack moet ook flags meekrijgen
