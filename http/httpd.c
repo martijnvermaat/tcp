@@ -27,10 +27,13 @@
 #define LISTEN_PORT 80
 #define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
 #define TIME_OUT 5
-#define MAX_REQUEST_LENGTH 512
-#define MAX_RESPONSE_LENGTH 80000
+#define REQUEST_BUFFER_SIZE 512
+#define RESPONSE_BUFFER_SIZE 1024 /* 'minimum number of bytes we like to send in one go' */
+#define FILE_BUFFER_SIZE 80000 /* number of bytes to read at a time from a file, should
+                                  be at least the size of RESPONSE_BUFFER_SIZE */
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpd.c / 0.1 (maybe on Minix)"
+
 
 typedef enum {
     METHOD_GET, METHOD_HEAD, METHOD_POST, METHOD_PUT,
@@ -54,16 +57,19 @@ typedef enum {
 int serve(void);
 int parse_request(char *request, http_method *method, char **url, char **protocol);
 int parse_url(char *url, char **filename, char **mimetype);
-int read_token(char *buffer, int buffer_length, char *token);
-int count_spaces(char *buffer, int buffer_length);
-void write_response(char *buffer, http_method method, char *url, char *protocol);
-void send_response(char *buffer);
-int handle_get(char *buffer, char *url);
+int write_response(http_method method, char *url, char *protocol);
+int send_buffer(void);
+int handle_get(char *url);
 int file_name_character(char *c);
-int write_status(char *buffer, http_status status);
-int write_error(char *buffer, http_status status);
-int write_standard_headers(char *buffer);
-int write_header(char *buffer, http_header header, char *value);
+int write_data(const char *data, int length);
+int write_status(http_status status);
+int write_error(http_status status);
+int write_standard_headers();
+int write_header(http_header header, char *value);
+
+
+static char response_buffer[RESPONSE_BUFFER_SIZE];
+static int response_buffer_size;
 
 
 static void alarm_handler(int sig) {
@@ -167,8 +173,7 @@ int main(int argc, char** argv) {
 
 int serve(void) {
 
-    char request_buffer[MAX_REQUEST_LENGTH + 1]; /* +1 because we NULL term it */
-    char response_buffer[MAX_RESPONSE_LENGTH + 1]; /* +1 because we NULL term it */
+    char request_buffer[REQUEST_BUFFER_SIZE + 1]; /* +1 because we NULL term it */
     int request_length;
     ipaddr_t saddr;
 
@@ -176,13 +181,17 @@ int serve(void) {
     char *url;
     char *protocol;
 
+    response_buffer_size = 0;
+
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
         return 0;
     }
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    request_length = tcp_read(request_buffer, MAX_REQUEST_LENGTH);
+    /* read at most REQUEST_BUFFER_SIZE bytes, we won't do
+       anything with request bigger than that anyway... */
+    request_length = tcp_read(request_buffer, REQUEST_BUFFER_SIZE);
     alarm(0);
 
     if (request_length < 1) {
@@ -193,12 +202,16 @@ int serve(void) {
     request_buffer[request_length] = '\0';
 
     if (parse_request(request_buffer, &method, &url, &protocol)) {
-        write_response(response_buffer, method, url, protocol);
+        if (!(write_response(method, url, protocol)
+              && send_buffer())) {
+            return 1;
+        }
     } else {
-        write_error(response_buffer, STATUS_BAD_REQUEST);
+        if (!(write_error(STATUS_BAD_REQUEST)
+              && send_buffer())) {
+            return 1;
+        }
     }
-
-    send_response(response_buffer);
 
     if (tcp_close() != 0) {
         return 0;
@@ -206,7 +219,7 @@ int serve(void) {
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    while (tcp_read(request_buffer, MAX_REQUEST_LENGTH) > 0) {}
+    while (tcp_read(request_buffer, REQUEST_BUFFER_SIZE) > 0) {}
     alarm(0);
 
     return 1;
@@ -300,49 +313,41 @@ int parse_request(char *request, http_method *method, char **url, char **protoco
 
 /* 1 on success, 0 on failure */
 
-void write_response(char *buffer, http_method method, char *url, char *protocol) {
-
-    int length = 0;
+int write_response(http_method method, char *url, char *protocol) {
 
     /* check for HTTP 1.0 protocol */
     if (strcmp(protocol, "HTTP/1.0") != 0) {
-        length += write_error(buffer, STATUS_HTTP_VERSION_NOT_SUPPORTED);
-        buffer[length] = '\0';
-        return;
+        return write_error(STATUS_HTTP_VERSION_NOT_SUPPORTED);
     }
 
     /* add a handle_* procedure for each HTTP method */
     switch (method) {
         case METHOD_GET:
-            length += handle_get(buffer, url);
+            return handle_get(url);
             break;
         default:
             /* unsupported method */
-            length += write_error(buffer, STATUS_NOT_IMPLEMENTED);
+            return write_error(STATUS_NOT_IMPLEMENTED);
     }
-
-    buffer[length] = '\0';
-
-    return;
 
 }
 
 
-/* number of bytes written */
+/* 1 on success, 0 on failure */
 
-int handle_get(char *buffer, char *url) {
+int handle_get(char *url) {
 
     char *filename;
     char *mimetype;
 
     FILE *fp;
     char filesize[12];
-    int byte;
-
-    int length;
+    char file_buffer[FILE_BUFFER_SIZE+1];
+    int bytes_read;
+    char byte;
 
     if (!parse_url(url, &filename, &mimetype)) {
-        return write_error(buffer, STATUS_BAD_REQUEST);
+        return write_error(STATUS_BAD_REQUEST);
     }
 
     /* open file */
@@ -350,42 +355,80 @@ int handle_get(char *buffer, char *url) {
         /* could not open file */
         switch (errno) {
             case ENOENT:
-                length = write_error(buffer, STATUS_NOT_FOUND);
+                return write_error(STATUS_NOT_FOUND);
                 break;
             case EACCES:
-                length = write_error(buffer, STATUS_FORBIDDEN);
+                return write_error(STATUS_FORBIDDEN);
                 break;
             default:
-                length = write_error(buffer, STATUS_INTERNAL_SERVER_ERROR);
+                return write_error(STATUS_INTERNAL_SERVER_ERROR);
         }
-        return length;
     }
 
     /* obtain file size */
     /* this is not ideal code... maybe replace with stat() or so... */
+
     fseek(fp, 0, SEEK_END);
     filesize[sprintf(filesize, "%ld", ftell(fp))] = '\0';
     rewind(fp);
 
     /* todo: last-modified */
 
-    length = write_status(buffer, STATUS_OK);
-    length += write_header(buffer + length, HEADER_CONTENT_TYPE, mimetype);
-    length += write_header(buffer + length, HEADER_CONTENT_LENGTH, filesize);
-    length += write_standard_headers(buffer + length);
+    /* write header and header/body seperator */
+    if (!(write_status(STATUS_OK)
+          && write_header(HEADER_CONTENT_TYPE, mimetype)
+          && write_header(HEADER_CONTENT_LENGTH, filesize)
+          && write_standard_headers()
+          && write_data("\r\n", 2))) {
+        fclose(fp);
+        return 0;
+    }
 
-    /* blank line between headers and body */
-    length += sprintf(buffer + length, "\r\n");
+    /* read file contents */
+    do {
+
+        bytes_read = 0;
+
+        while ((bytes_read < FILE_BUFFER_SIZE)
+               && ((byte = getc(fp)) != EOF)) {
+            file_buffer[bytes_read] = byte;
+            bytes_read++;
+        }
+
+        if (!write_data(file_buffer, bytes_read)) {
+            fclose(fp);
+            return 0;
+        }
+
+    } while (bytes_read == FILE_BUFFER_SIZE);
+
+
+/*
+    do {
+        bytes_read = (int) fread(file_buffer, sizeof(file_buffer), 1, fp);
+        printf("read data: %d\n", bytes_read);
+        if (!write_data(file_buffer, bytes_read)) {
+            fclose(fp);
+            return 0;
+        }
+    } while (bytes_read == FILE_BUFFER_SIZE);
+*/
+
+    /* error occured during reading of file */
+    if (ferror(fp)) {
+        fclose(fp);
+        return write_error(STATUS_INTERNAL_SERVER_ERROR);
+    }
 
     /* write file contents to response buffer */
+    /*
     while (
-        /* find out if getc is realy the thing to
-           do here (one alternative is fread) */
         ((byte = getc(fp)) != EOF)
         && (length < MAX_RESPONSE_LENGTH)
         ) {
         length += sprintf(buffer + length, "%c", byte);
     }
+    */
 
     /* the following would allocate enough memory to read every
        file of arbritary size:
@@ -421,13 +464,7 @@ int handle_get(char *buffer, char *url) {
 
     fclose(fp);
 
-    /* check if we read entire file */
-    if (byte != EOF) {
-        /* should we try harder here and send data in several chunks? */
-        length = write_error(buffer, STATUS_PAYMENT_REQUIRED);
-    }
-
-    return length;
+    return 1;
 
 }
 
@@ -507,47 +544,31 @@ int file_name_character(char *c) {
 }
 
 
-/* just write everything to tcp */
+/* 1 on success, 0 on failure */
 
-void send_response(char *buffer) {
-
-    /* maybe we shouldn't make this buffer NULL terminating... */
-    int length = strlen(buffer);
-    int sent = 0;
-    int total_sent = 0;
-
-    do {
-        sent = tcp_write(buffer + total_sent, length - total_sent);
-        total_sent += sent;
-    } while (sent && total_sent < length);
-
-}
-
-
-/* number of bytes written */
-
-int write_error(char *buffer, http_status status) {
-
-    int length;
-
-    length = write_status(buffer, status);
-    length += write_header(buffer + length, HEADER_CONTENT_TYPE, "text/plain");
-    length += write_header(buffer + length, HEADER_CONTENT_LENGTH, "0");
-    length += write_standard_headers(buffer + length);
+int write_error(http_status status) {
 
     /* we could send some more info in an HTML body here... */
 
-    return length;
+    /* maybe the error occured after some data was already
+       written, so reset the buffer */
+    response_buffer_size = 0;
+
+    return (write_status(status)
+            && write_header(HEADER_CONTENT_TYPE, "text/plain")
+            && write_header(HEADER_CONTENT_LENGTH, "0")
+            && write_standard_headers());
 
 }
 
 
-/* number of bytes written */
+/* 1 on success, 0 on failure */
 
-int write_status(char *buffer, http_status status) {
+int write_status(http_status status) {
 
     char *status_string;
     int status_code;
+    int written;
 
     switch (status) {
         case STATUS_OK:
@@ -578,38 +599,54 @@ int write_status(char *buffer, http_status status) {
             status_string = "HTTP Version Not Supported";
             status_code = 505;
             break;
-        case STATUS_NOT_IMPLEMENTED:
+        default:
             status_string = "Not Implemented";
             status_code = 501;
-            break;
-        default:
-            return 0;
     }
 
-    return sprintf(buffer, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
+    /*
+      if it doesn't fit in the buffer, just return failure.
+      the entire header should always fit in the buffer
+      anyway, so it isn't worth the hassle to send the buffer
+      contents first.
+      to change this behaviour, just update this procedure
+      like write_data.
+    */
+
+    /* the +1 is because \0 is copied not counted by snprintf */
+    written = snprintf(response_buffer + response_buffer_size,
+                       RESPONSE_BUFFER_SIZE - response_buffer_size + 1,
+                       "%s %d %s\r\n", PROTOCOL, status_code, status_string);
+
+    if ((written < 0)
+        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size + 1))) {
+        response_buffer_size += written;
+        return 0;
+    }
+
+    response_buffer_size += written;
+
+    return 1;
 
 }
 
 
-/* number of bytes written */
+/* 1 on success, 0 on failure */
 
-int write_standard_headers(char *buffer) {
+int write_standard_headers() {
 
-    int length;
-
-    length = write_header(buffer, HEADER_ISLAND, "Goeree Overflakkee");
-    length += write_header(buffer + length, HEADER_SERVER, VERSION);
-
-    return length;
+    return (write_header(HEADER_ISLAND, "Goeree Overflakkee")
+            && write_header(HEADER_SERVER, VERSION));
 
 }
 
 
-/* number of bytes written */
+/* 1 on success, 0 on failure */
 
-int write_header(char *buffer, http_header header, char *value) {
+int write_header(http_header header, char *value) {
 
     char *header_string;
+    int written;
 
     switch (header) {
         case HEADER_CONTENT_TYPE:
@@ -625,9 +662,99 @@ int write_header(char *buffer, http_header header, char *value) {
             header_string = "Nice-Island";
             break;
         default:
-            return 0;
+            return 1;
     }
 
-    return sprintf(buffer, "%s: %s\r\n", header_string, value);
+    /*
+      if it doesn't fit in the buffer, just return failure.
+      the entire header should always fit in the buffer
+      anyway, so it isn't worth the hassle to send the buffer
+      contents first.
+      to change this behaviour, just update this procedure
+      like write_data.
+    */
+
+    /* the +1 is because \0 is copied not counted by snprintf */
+    written = snprintf(response_buffer + response_buffer_size,
+                       RESPONSE_BUFFER_SIZE - response_buffer_size + 1,
+                       "%s: %s\r\n", header_string, value);
+
+    printf("written: %d\n", written);
+
+    if ((written < 0)
+        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size + 1))) {
+        return 0;
+    }
+
+    response_buffer_size += written;
+
+    return 1;
+
+}
+
+
+/* write bytes to buffer and send buffer if is is full */
+/* 1 on success, 0 on failure */
+
+int write_data(const char *data, int length) {
+
+    int write;
+    int written = 0;
+
+    while (written < length) {
+
+        /* check for full buffer */
+        if ((RESPONSE_BUFFER_SIZE - response_buffer_size) < 1) {
+            if (!send_buffer()) return 0;
+        }
+
+        /*
+          we could do a check here if length-written means a full buffer;
+          in that case, don't copy it to the buffer, but send it right
+          away. this would prevent copying enormous amounts of data when
+          sending big files.
+          we should really implement this, it should improve efficiency
+          a lot.
+        */
+
+        /* determine number of bytes to write */
+        if ((length - written) > (RESPONSE_BUFFER_SIZE - response_buffer_size)) {
+            write = RESPONSE_BUFFER_SIZE - response_buffer_size;
+        } else {
+            write = length - written;
+        }
+
+        /* copy some bytes to buffer */
+        memcpy(response_buffer + response_buffer_size, data + written, write);
+        response_buffer_size += write;
+
+        written += write;
+
+    }
+
+    return 1;
+
+}
+
+
+/* send contents of buffer */
+/* 1 on success, 0 on failure */
+
+int send_buffer() {
+
+    int sent = 0;
+    int total_sent = 0;
+
+    do {
+        sent = tcp_write(response_buffer + total_sent, response_buffer_size - total_sent);
+        total_sent += sent;
+    } while (sent && total_sent < response_buffer_size);
+
+    /* sending data failed */
+    if (!sent) return 0;
+
+    response_buffer_size = 0;
+
+    return 1;
 
 }
