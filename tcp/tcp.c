@@ -12,20 +12,18 @@
 #define ACK_FLAG 0x10
 #define URG_FLAG 0x20
 
-#define RTT 1 /* seconds */
-
 
 /* States */
 typedef enum{
-    S_CLOSED, S_CONNECTING, S_LISTEN, S_SYN_SENT, S_SYN_ACK_SENT, S_SYN_RECEIVED, 
-    S_ESTABLISHED, S_FIN_WAIT_1, S_FIN_WAIT_2, S_CLOSE_WAIT, S_TIME_WAIT, 
-    S_CLOSING, S_LAST_ACK
+    S_START, S_CLOSED, S_CONNECTING, S_LISTEN, S_SYN_SENT, S_SYN_ACK_SENT,
+    S_SYN_RECEIVED, S_ESTABLISHED, S_FIN_WAIT_1, S_FIN_WAIT_2, S_CLOSE_WAIT,
+    S_TIME_WAIT, S_CLOSING, S_LAST_ACK
 } state_t;
 
 /* Events */
 typedef enum {
-    E_CONNECT, E_SYN_SENT, E_SYN_ACK_RECEIVED, E_LISTEN, E_SYN_RECEIVED,
-    E_SYN_ACK_SENT, E_ACK_RECEIVED, E_ACK_TIME_OUT, E_CLOSE, 
+    E_SOCKET_OPEN, E_CONNECT, E_SYN_SENT, E_SYN_ACK_RECEIVED, E_LISTEN,
+    E_SYN_RECEIVED, E_SYN_ACK_SENT, E_ACK_RECEIVED, E_ACK_TIME_OUT, E_CLOSE, 
     E_USER_TIME_OUT, E_FIN_RECEIVED
 } event_t;
 
@@ -39,7 +37,6 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr);
 void handle_data(char *data, int data_size, tcp_u32t seq_nr, int push);
 void handle_syn(ipaddr_t their_ip, tcp_u16t src_port, tcp_u32t seq_nr, tcp_u8t flags);
 void handle_fin(tcp_u8t flags, tcp_u32t seq_nr);
-int set_state(state_t new_state);
 void declare_event(event_t e);
 state_t get_state(void);
 void clear_tcb(void);
@@ -102,8 +99,25 @@ typedef struct seg_header {
 
 typedef struct segment segment_t;
 
-static tcb_t tcb;
-static int alarm_went_of;
+static tcb_t tcb = {
+    0,       /* out_ipaddr        */
+    0,       /* their_ipaddr      */
+    0,       /* our_port          */
+    0,       /* their_port        */
+    0,       /* our_seq_nr        */
+    0,       /* their_seq_nr      */
+    0,       /* ack_nr            */
+    0,       /* expected_ack      */
+    "",      /* rcv_data          */
+    0,       /* rcvd_data_start   */
+    0,       /* rcvd_data_size    */
+    0,       /* rcvd_data_psh     */
+    "",      /* unacked_data      */
+    0,       /* unacked_data_len  */
+    S_START  /* state             */
+};
+
+static int alarm_went_of = 0;   /* <- in tcb? */
 
 
 
@@ -167,18 +181,27 @@ int tcp_socket(void) {
       nothing if called again
     */
 
-    tcb.state = S_CLOSED;
+    if (get_state() != S_START) {
+        return -1;
+    }
+
     if (!my_ipaddr){
         ip_init();
     }
     if (!my_ipaddr) {
         return -1;
     }
+
+    declare_event(E_SOCKET_OPEN);
+
     tcb.our_ipaddr = my_ipaddr;
+
+    /*
     tcb.their_seq_nr = 0;
-    tcb.rcvd_data_start = 10;
+    tcb.rcvd_data_start = 0;
     tcb.rcvd_data_size = 0;
     alarm_went_of = 0;
+    */
 
     return 0;
 
@@ -186,6 +209,10 @@ int tcp_socket(void) {
 
 
 int tcp_connect(ipaddr_t dst, int port) {
+
+    if (get_state() != S_CLOSED) {
+        return -1;
+    }
 
     declare_event(E_CONNECT);
     tcb.our_port = CLIENT_PORT;
@@ -199,11 +226,15 @@ int tcp_connect(ipaddr_t dst, int port) {
 
 int tcp_listen(int port, ipaddr_t *src) {
 
+    if (get_state() != S_CLOSED) {
+        return -1;
+    }
+
     tcb.their_port = CLIENT_PORT;
     tcb.our_port = port;
 
     declare_event(E_LISTEN);
-    while ( get_state() != S_ESTABLISHED ) {
+    while (get_state() != S_ESTABLISHED) {
         do_packet();
         if (get_state() == S_SYN_RECEIVED) {
             send_syn();
@@ -221,6 +252,11 @@ int tcp_listen(int port, ipaddr_t *src) {
 
 int tcp_close(void){
 
+    if (get_state() != S_ESTABLISHED
+        && get_state() != S_CLOSE_WAIT) {
+        return -1;
+    }
+
     declare_event(E_CLOSE);
     send_fin();
 
@@ -236,10 +272,9 @@ int tcp_read(char *buf, int maxlen) {
 
     /* print_buffer();*/
 
-    if (!
-        (tcb.state == S_ESTABLISHED
-         || tcb.state == S_FIN_WAIT_1
-         || tcb.state == S_FIN_WAIT_2)) {
+    if (get_state() != S_ESTABLISHED
+        && get_state() != S_FIN_WAIT_1
+        && get_state() != S_FIN_WAIT_2) {
         return -1;
     }
 
@@ -293,6 +328,7 @@ int tcp_write(const char *buf, int len){
     if (get_state() != S_ESTABLISHED) {
         return -1;
     }
+
     while (bytes_left) {
         data_sz = min(MAX_TCP_DATA, len - bytes_sent);
         bytes_sent = send_data(buf_pointer, data_sz);
@@ -489,7 +525,7 @@ void handle_syn(ipaddr_t their_ip, tcp_u16t src_port, tcp_u32t seq_nr, tcp_u8t f
 
         if (all_acks_received()) {
             fflush(stdout);
-            set_state(S_ESTABLISHED);
+            declare_event(E_SYN_ACK_RECEIVED);
             /* todo: received sequence number may be invalid */
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
@@ -721,11 +757,6 @@ void tcp_alarm(int sig){
     alarm_went_of = 1;
 }
 
-/* todo: get rid of this procedure */
-int set_state(state_t new_state){
-    tcb.state = new_state;
-    return 1;
-}
 
 /* performs state transition based on event and current state */
 void declare_event(event_t e) {
@@ -733,7 +764,13 @@ void declare_event(event_t e) {
     int s;
     
     s = tcb.state;
-    if (s == S_CLOSED && e == E_CONNECT) {
+
+    if (s == S_START && e == E_SOCKET_OPEN) {
+        tcb.state = S_CLOSED;
+        printf("%s: Event: E_SOCKET_OPEN, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
+        fflush(stdout);
+
+    } else if (s == S_CLOSED && e == E_CONNECT) {
         tcb.state = S_CONNECTING;
         printf("%s: Event: E_CONNECT, State to S_CONNECTING\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
