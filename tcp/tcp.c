@@ -367,7 +367,7 @@ int deliver_received_bytes(char *buf, int maxlen) {
     
     /* copy first chunk out of circular buffer*/
     first_chunk_sz = BUFFER_SIZE - tcb.rcvd_data_start;
-    size = min(delivered_bytes, first_chunk_sz);
+    size = min(bytes_to_copy, first_chunk_sz);
     memcpy(buf, &tcb.rcv_data[tcb.rcvd_data_start], size);
 
     /* possibly copy second chunk if delivered data wraps in buffer */
@@ -629,11 +629,12 @@ void handle_fin(tcp_u8t flags, tcp_u32t seq_nr) {
         if (s == S_ESTABLISHED || s == S_FIN_WAIT_1 || s == S_FIN_WAIT_2) {
             printf("%s: fin accepted\n",inet_ntoa(my_ipaddr));
             fflush(stdout);
-            declare_event(E_FIN_RECEIVED);
+
             /* todo: received sequence number may be invalid */
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
             send_ack();
+            declare_event(E_FIN_RECEIVED);
             
         } else if (s == S_CLOSE_WAIT || s == S_LAST_ACK) {
         
@@ -827,7 +828,6 @@ void ack_these_bytes(int bytes_delivered) {
 
 
 void clear_tcb(void) {
-    tcb.state = S_CLOSED;
     tcb.our_ipaddr = my_ipaddr;
     /* todo:
       shouldn't we set our_seq_nr to 0 too?
