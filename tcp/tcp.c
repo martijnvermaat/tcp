@@ -403,11 +403,11 @@ int do_packet(void) {
     tcp_u8t flags;
     char data[MAX_TCP_DATA];
     int data_sz = 0, rcvd;
-
+ 
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
 
-    if (tcb.state == S_LISTEN) {
+    if (tcb.state == S_LISTEN && (flags & SYN_FLAG)) {
         tcb.their_port = src_port;
     }
     
