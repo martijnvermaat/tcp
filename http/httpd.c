@@ -443,6 +443,7 @@ int parse_url(char *url, char **filename, char **mimetype) {
 
 int file_name_character(char *c) {
 
+    /* okay, maybe this is a bit too optimistic... */
     return 1;
 
 }
@@ -564,40 +565,5 @@ int write_header(char *buffer, http_header header, char *value) {
     }
 
     return sprintf(buffer, "%s: %s\r\n", header_string, value);
-
-}
-
-
-/* number of bytes written, -1 in case of error */
-
-int write_body(char *buffer) {
-
-    char *file = "tisvu";
-    FILE *fp;
-    int byte;
-    int size = 0;
-
-    size += sprintf(buffer + size, "\r\n");
-
-    /*
-      More error checking here if opening file goes well.
-      Also, we should check permissions, as we should always
-      return a Permission Denied on files not world-readable.
-      Re-read the guide for this some time...
-    */
-    fp = fopen(file, "r");
-
-    /*
-      Actually, MAX_RESPONSE_LENGTH also includes header size, so this
-      check on size is not correct at all ;)
-    */
-    while (
-        ((byte = getc(fp)) != EOF)
-        && (size < MAX_RESPONSE_LENGTH)
-        ) {
-        size += sprintf(buffer + size, "%c", byte);
-    }
-
-    return size;
 
 }
