@@ -193,171 +193,8 @@ will stop communicating, but
 
 
 
-\section{Low-level design}
 
-
-\subsection{Connection-ori\"ented tier}
-
-
-We will roughly sketch the structure of all procedures in the
-connection-ori\"ented tier, mostly with pseudo-code, sometimes
-augmented with comments.
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure tcp\_read]
-/*
-  *buf      Buffer to store data
-  maxlen    Maximum number of bytes to read
-
-  Returns number of bytes read.
-
-  This procedure is blocking.
-*/
-
-int tcp_read(char *buf, int maxlen) {
-
-    while ( buffer_empty() ) {
-        do_packet();
-    }
-
-    return copy_data(&buf, &maxlen);
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure tcp\_write]
-/*
-  *buf      Buffer with data to write
-  len       Number of bytes to write
-
-  Returns 0 on success, number of bytes written on incomplete
-  write, -1 otherwise.
-*/
-
-int tcp_write(char *buf, int len) {
-
-    bytes_left = len;
-
-    while (bytes_left) {
-        /* send_data calls do_packet when needed */
-        bytes_sent = send_data(*buf, bytes_left);
-        if (bytes_sent == -1) break;
-        bytes_left -= bytes_sent;
-    }
-
-    if (bytes_left == len) {
-        /* will also happen if len=0 */
-        return -1;
-    } else if (bytes_left) {
-        return len-bytes_left;
-    } else {
-        return 0;
-    }
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure tcp\_connect]
-/*
-  dst       Host address to connect to
-  port      Port number on host to connect to
-
-  Returns 0 on success, -1 on failure.
-*/
-
-int tcp_connect(ipaddr_t dst, int port) {
-
-    /* send_syn calls do_packet when needed */
-    return send_syn();
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure tcp\_listen]
-/*
-  port      Local port to connect to
-  *src      Address of client to listen to
-
-  Returns 0.
-
-  This procedure is blocking.
-*/
-
-int tcp_listen(int port, ipaddr_t *src) {
-
-    set_state(LISTEN);
-    do {
-        do_packet();
-        if (get_state() == SYN_RECEIVED) {
-            send_syn();
-        }
-    while ( get_state() != ESTABLISHED );
-    return 0;
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure tcp\_close]
-/*
-  Returns 0, except when there is no active connection.
-*/
-
-int tcp_close() {
-
-    /* check current state */
-
-    /* send_fin calls do_packet when needed */
-    return send_fin();
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure tcp\_socket]
-/*
-  Returns 0 on success, -1 on failure.
-*/
-
-int tcp_socket() {
-
-    return set_initial_state();
-
-}
-\end{lstlisting}
-
-
-
-\subsection{State tier}
-
-As we did in the previous section for the connection-ori\"ented tier, we
-will describe most procedures of the state tier in this section, again by
-using pseudo-code.
-First, we will give an overview of the most important decisions that we made.
-
-
-\subsubsection{Design decisions}
+\section{Design decisions}
 
 
 \paragraph{Buffer for incoming data}
@@ -417,8 +254,9 @@ First, we will give an overview of the most important decisions that we made.
     procedure. For example, 
     is the state is \lstinline|S_LISTEN| and a \lstinline|syn| is received, 
     \lstinline|E_SYN_RECEIVED| is passed to \lstinline|declare_event()|. The state will 
-    then be altered to \lstinline|S_SYN_RECEIVED|. In this way, \lstinline|declare_event()| directly implements the state 
-    transition diagrams shown in appendix A.
+    then be altered to \lstinline|S_SYN_RECEIVED|. 
+    In this way, \lstinline|declare_event()| directly implements the state 
+    transition diagrams shown in appendix \ref{sec:A}.
     
     There is a trade-off here between straightforward source code and source 
     code that has some build in bug-detection, which are both preferable. If we 
@@ -449,295 +287,15 @@ First, we will give an overview of the most important decisions that we made.
     
     Of course, we still have to be aware of wrapping sequence numbers when we do
     comparisons involving sequence numbers or acknowledgement numbers.
-    
-    
-\subsubsection{State-tier Pseudocode}
 
 
-\paragraph{}
 
-
-\begin{lstlisting}[title=Procedure do\_packet]
-/*
-  Returns the number of bytes read, or -1 on failure.
-
-  This procedure is blocking.
-*/
-
-int do_packet() {
-
-    len = recv_tcp_packet(...., data);
-    handle_ack(ack_nb);
-    handle_fin(flags);
-    handle_syn(flags);
-    handle_data(data, data_sz);
-
-    return len;
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure handle\_ack]
-/*
-  ack_nb    Acknowledgement number
-
-  Void procedure.
-*/
-
-void handle_ack(u32_t ack_nb) {
-
-    /* Sequence numbers wrap around, solve this later */
-    if (ack_nb > tcb.our_sequence_num
-        && ack_nb <= tcb.expected_ack) {
-
-        tcb.our_sequence_num = ack_nb;
-        /* Adjust number of undelivered bytes */
-
-        if (get_state() == SYN_RECEIVED) {
-
-            set_state(ESTABLISHED);
-
-        } else if (get_state() == SYN_SENT) {
-
-            set_state(SYN_ACK_RECEIVED);
-
-        } else if (get_state() == FIN_WAIT_1) {
-
-            set_state(FIN_WAIT_2);
-
-        } else if (get_state() == LAST_ACK) {
-
-            set_state(CLOSED);
-
-        } else if (get_state() == CLOSING) {
-
-            set_state(TIME_WAIT);
-
-        }
-
-    }
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure handle\_syn]
-/*
-  flags     TCP packet flags
-
-  Void procedure.
-*/
-
-void handle_syn(u8_t flags) {
-
-    if (contains_syn(flags)) {
-
-        if (get_state() == LISTEN) {
-
-            set_state(SYN_RECEIVED);
-            /* send_syn will be called from tcp_listen */
-
-            send_ack();
-
-        } else if (get_state() == SYN_ACK_RECEIVED) {
-
-            set_state(ESTABLISHED);
-
-            send_ack();
-
-        }
-
-    }
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure handle\_fin]
-/*
-  flags     TCP packet flags
-
-  Void procedure.
-*/
-
-void handle_fin(u8_t flags) {
-
-    if (contains_fin(flags)) {
-
-        if (get_state() == ESTABLISHED) {
-
-            set_state(CLOSE_WAIT);
-            send_ack();
-
-        } else if (get_state() == FIN_WAIT_1) {
-
-            set_state(CLOSING);
-            send_ack();
-
-        } else if (get_state() == FIN_WAIT_2) {
-
-            set_state(TIME_WAIT);
-            send_ack();
-
-        }
-
-    }
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure copy\_data]
-/*
-  buf       Char buffer to copy bytes to
-  maxlen    Maximum number of bytes to copy
-
-  Returns number of bytes copied.
-*/
-
-int copy_data(*char buf, int maxlen) {
-
-    /* copy max <maxlen> bytes from buffer to <buf> */
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure send\_data]
-/*
-  buf       Buffer with bytes to send
-  len       Maximum number of bytes to send
-
-  Returns number of bytes sent, or -1 on error.
-*/
-
-int send_data(char *buf, int len) {
-
-    send = min(MAX_PACKET_SIZE, len);
-
-    send_tcp_packet(..., &buf, send);
-    tcb.our_sequence_number += send;
-    tcb.expected_ack = tcb.our_sequence_number-1;
-
-    do {
-        do_packet();
-    } while ( !<received ack> );
-
-    return send;
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-
-\begin{lstlisting}[title=Procedure send\_syn]
-/*
-  Returns 0 on success, -1 otherwise.
-*/
-
-int send_syn() {
-
-    send_tcp_packet(flags=syn,ack=current_ack);
-    tcb.our_sequence_number++;
-    tcb.expected_ack = tcb.our_sequence_number-1;
-    /*set_state(X);*/
-
-    do {
-        do_packet();
-    while (get_state() != ESTABLISHED);
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure send\_fin]
-/*
-  Returns 0 on success, -1 otherwise.
-*/
-
-int send_fin() {
-
-    send_tcp_packet(flags=fin,ack=current_ack);
-    tcb.our_sequence_number++;
-    tcb.expected_ack = tcb.our_sequence_number-1;
-    set_state(FIN_WAIT_1);
-
-    do {
-        do_packet();
-    while (get_state() == FIN_WAIT_1);
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure send\_ack]
-/*
-  param     Description
-*/
-
-int send_ack() {
-
-}
-\end{lstlisting}
-
-
-\subsubsection{TCP Control Block}
+\subsection{TCP Control Block}
 
 
 The \lstinline|tcb| (TCP Control Block) contains all information on the
 current state. This includes client and host addresses and ports, buffer
 data, packet sequence number, etcetera.
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=The TCP Control Block structure]
-/* TCP control block */
-typedef struct tcb {
-    ipaddr_t our_ipaddr;
-    ipaddr_t their_ipaddr;
-    tcp_u16t our_port;
-    tcp_u16t their_port;
-    tcp_u32t our_seq_nr;
-    tcp_u32t their_seq_nr;  /* last byte we acked */
-    tcp_u32t ack_nr;        /* the seq nr to ack in next packet */
-    tcp_u32t expected_ack;  
-    char rcv_data[BUFFER_SIZE];
-    int rcvd_data_start;    /* pointer to start of circular buffer */
-    int rcvd_data_size;     /* nr of bytes in buffer */
-    int rcvd_data_psh;      /* number of bytes to push, (from start of buffer)*/
-    char *unacked_data;     /* transmitted data yet to be acked (or resent) */
-    int unacked_data_len;   /* length of transmitted data yet to be acked */
-    state_t state;          /* stores the current state of the connection */
-}
-
-\end{lstlisting}
 
 
 \paragraph{}
@@ -755,6 +313,35 @@ That it does not loop to wait for a valid packet, is because this might take
 forever. The looping is taken care of by \lstinline|tcp\_read()|, which checks if the alarm 
 went of on every cycle.
 
+\appendix
+
+\section{State transition diagrams} \label{sec:A}
+
+\paragraph
+The three way handshake diagram shows the states we use in our TCP 
+implementation. A capital label denotes a call to TCP by the application. 
+The other labels refer to events that are caused by TCP itself, for example 
+incoming packets or timers that go off. \lstinline|partner_dead| means that 
+after resending a packet 10 times, the other party is considered to be retired.
+
+
+
+\begin{figure}
+\begin{center}
+\includegraphics{images/handshake.png}
+\end{center}
+\caption{Three way Handshake}
+\label{figuur:handshake}
+\end{figure}
+
+\begin{figure}
+\begin{center}
+\includegraphics{images/termination.png}
+\end{center}
+\caption{Connection termination}
+\label{figuur:termination}
+\end{figure}
 
 
 \end{document}
+
