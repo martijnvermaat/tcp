@@ -8,17 +8,20 @@
 
 
 /*
-  Test basic.c
+  Test all_ascii.c
 
-  Standard listen and connect. Read and write to both sides,
-  with compares on received data and expected data. Close.
+  Tries to send an read all ascii characters one by one.
+  So it basically does 256 writes and 256 reads of one byte, all
+  with a different value.
 */
 
 
 int main(void) {
 
-    char client_buf[8], server_buf[8];
+    char client_buf[1], server_buf[1];
     char *eth, *ip1, *ip2;
+
+    int i, j;
 
     ipaddr_t saddr;
 
@@ -55,19 +58,15 @@ int main(void) {
             return 1;
         }
 
-        if (tcp_write("foo", 4) != 4) {
-            fprintf(stderr, "Client: Writing 'foo' failed\n");
-            return 1;
-        }
+        for (i=-127; i<128; i++) {
 
-        if (tcp_read(client_buf, 4) != 4) {
-            fprintf(stderr, "Client: Reading 4 bytes failed\n");
-            return 1;
-        }
+            client_buf[0] = i;
 
-        if (strcmp(client_buf, "bar")) {
-            fprintf(stderr, "Client: Reading 'bar' failed\n");
-            return 1;
+            if (tcp_write(client_buf, 1) != 1) {
+                fprintf(stderr, "Client: Writing ASCII character %d failed\n", i);
+                return 1;
+            }
+
         }
 
         if (tcp_close() != 0) {
@@ -96,19 +95,19 @@ int main(void) {
             return 1;
         }
 
-        if (tcp_read(server_buf, 4) != 4) {
-            fprintf(stderr, "Server: Reading 4 bytes failed\n");
-            return 1;
-        }
+        for (j=-127; j<128; j++) {
 
-        if (strcmp(server_buf, "foo")) {
-            fprintf(stderr, "Server: Reading 'foo' failed\n");
-            return 1;
-        }
+            if (tcp_read(server_buf, 1) < 0) {
+                fprintf(stderr, "Server: Reading 1 byte failed\n");
+                return 1;
+            }
 
-        if (tcp_write("bar", 4) != 4) {
-            fprintf(stderr, "Server: Writing 'bar' failed\n");
-            return 1;
+            if (server_buf[0] != j) {
+                fprintf(stderr, "Server: Reading ASCII character %d failed\n", j);
+                fprintf(stderr, "Server: Found ASCII character %d\n", server_buf[0]);
+                return 1;
+            }
+
         }
 
         if (tcp_close() != 0) {
