@@ -514,9 +514,8 @@ int parse_url(char *url, char **filename, char **mimetype) {
       like that, so we only look for a simple filename.
     */
 
-    /* check for leading slash */
-    if (*u != '/') return 0;
-    u++;
+    /* check for optional leading slash */
+    if (*u == '/') u++;
 
     /* start of filename */
     *filename = u;

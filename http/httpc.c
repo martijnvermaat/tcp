@@ -444,6 +444,11 @@ int parse_status_line(char **status_line, int *status_ok) {
 
 int parse_header(char **header, char **value) {
 
+    /*
+      todo: a \r\n[space] is allowed to continue a
+      header on a new line (2.2 Basic Rules in spec)
+    */
+
     /* read spaces */
     while ((response_pointer < response_length)
            && (response_buffer[response_pointer] == ' ')) {
