@@ -109,10 +109,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+/*
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
     while (tcp_read(response_buffer, RESPONSE_BUFFER_SIZE) > 0) {}
     alarm(0);
+*/
 
     return 0;
 

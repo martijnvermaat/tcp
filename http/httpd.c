@@ -33,7 +33,7 @@
   Decide if we use 'size' or 'length' or 'len' (for ALL code).
   Also for 'chars' and 'bytes'. (Be consistent.)
 */
-#define KEEP_SERVING 0
+#define KEEP_SERVING 1
 #define LISTEN_PORT 80
 #define UNPRIVILIGED_GID 99 /* group nobody on minix is 99 */
 #define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
@@ -282,10 +282,12 @@ int serve(void) {
         return 0;
     }
 
+/*
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
     while (tcp_read(request_buffer, REQUEST_BUFFER_SIZE) > 0) {}
     alarm(0);
+*/
 
     return 1;
 
