@@ -43,7 +43,7 @@
 #define URL_LENGTH 255
 #define PROTOCOL_LENGTH 10
 #define MIME_TYPE_LENGTH 50
-#define HEADER_LINE_LENGTH 200
+#define HEADER_LINE_LENGTH 200  /* used for a lot of small temporary buffers */
 #define HTML_ERROR_LENGTH 300
 
 #define HTML_ERROR "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\
@@ -149,7 +149,7 @@ int main(int argc, char** argv) {
 
     /* keep calling serve() until it fails, then exit with error code */
     while (serve()) { }
-    printf("Listening failed");
+    printf("Listening failed\n");
     return 1;
 
 #else
@@ -565,11 +565,13 @@ int handle_get(char *url) {
     /* read file contents */
     do {
         byte = getc(fp);
-        if (ferror(fp)
-            || !write_data(&byte, 1)) {
+        if (feof(fp)) {
             break;
         }
-    } while (!feof(fp));
+        if (ferror(fp)) {
+            break;
+        }
+    } while (write_data(&byte, 1));
 
     /* error occured during reading of file */
     if (ferror(fp)) {
@@ -770,8 +772,6 @@ int write_status(http_status status) {
             status_code = 501;
     }
 
-    status_code = 200;
-
     /* format status line */
     written = snprintf(status_line, HEADER_LINE_LENGTH, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
 
@@ -880,12 +880,10 @@ int write_data(const char *data, int length) {
 
 int send_buffer() {
 
-    int sent;
-
-    sent = tcp_write(response_buffer, response_buffer_size);
-
-    /* sending data failed */
-    if (sent != response_buffer_size) return 0;
+    if (tcp_write(response_buffer, response_buffer_size)
+        != response_buffer_size) {
+        return 0;
+    }
 
     response_buffer_size = 0;
 

@@ -26,23 +26,23 @@
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpc.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
-#define REQUEST_BUFFER_SIZE 512 /* request should fit */
-#define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
+#define REQUEST_BUFFER_SIZE 512  /* request should fit */
+#define RESPONSE_BUFFER_SIZE 1024  /* response header should always fit */
+#define IP_LENGTH 18
+#define FILENAME_LENGTH 255
+#define HEADER_LINE_LENGTH 200  /* used for a lot of small temporary buffers */
 
 
 int do_request(char *ip, char *filename);
 int handle_response(char *ip, char *filename);
-int get_response_header(void);
-int parse_url(char *url, char **ip, char **filename);
+int get_response_header(char *buffer, int max_length);
+int parse_url(char *url, char *ip, int ip_length, char *filename, int filename_length);
 int file_name_character(int c);
-int parse_status_line(char **status_line, int *status_ok);
-int parse_header(char **header, char **value);
-int read_separator(void);
+int parse_status_line(char *buffer, int buffer_size, char *status_line, int status_line_length, int *status_ok);
+int parse_header(char *buffer, int buffer_size, char *header, int header_length, char *value, int value_length);
+int read_separator(char *buffer, int buffer_size);
 
 
-static char response_buffer[RESPONSE_BUFFER_SIZE];
-static int response_buffer_size = 0;
-static int response_pointer = 0;
 static int alarm_went_off = 0;
 
 
@@ -58,8 +58,8 @@ int main(int argc, char** argv) {
 
     char *eth, *ip1, *ip2;
 
-    char *ip;
-    char *filename;
+    char ip[IP_LENGTH];
+    char filename[FILENAME_LENGTH];
 
     if (argc < 2) {
         printf("No url found\nUsage: %s url\n", argv[0]);
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
     }
 
     /* parse url into ip and filename */
-    if (!parse_url(argv[1], &ip, &filename)) {
+    if (!parse_url(argv[1], ip, IP_LENGTH, filename, FILENAME_LENGTH)) {
         printf("Invalid url\n");
         return 1;
     }
@@ -165,14 +165,20 @@ int do_request(char *ip, char *filename) {
 
 int handle_response(char *ip, char *filename) {
 
-    char *status_line;
-    char *header;
-    char *value;
+    int i;
+
+    char buffer[RESPONSE_BUFFER_SIZE];
+    int buffer_size = 0;
+    int pointer = 0;
+
+    char status_line[HEADER_LINE_LENGTH];
+    char header[HEADER_LINE_LENGTH];
+    char value[HEADER_LINE_LENGTH];
     int status_ok;
 
-    char *header_content_length = "Unknown";
-    char *header_content_type = "Unknown";
-    char *header_last_modified = "Unknown";
+    char header_content_length[HEADER_LINE_LENGTH];// = "Unknown";
+    char header_content_type[HEADER_LINE_LENGTH]; // = "Unknown";
+    char header_last_modified[HEADER_LINE_LENGTH];// = "Unknown";
 
     time_t curtime;
 #define TIME_LENGTH 32
@@ -181,39 +187,44 @@ int handle_response(char *ip, char *filename) {
     FILE *fp;
 
     /* fill buffer with first part of response */
-    if (!get_response_header()) {
+    buffer_size = get_response_header(buffer, RESPONSE_BUFFER_SIZE);
+    if (buffer_size < 0) {
         printf("Request failed: could not retrieve response from server\n");
         return 0;
     }
 
-    /*
-      Be carefull to not use the buffer contents after they have been
-      overwritten. We assume the entire header fits in the buffer at
-      one time, so we can reference to header fields untill we call
-      add_to_buffer for reading more of the body.
-    */
-
     /* read status line */
-    if (!parse_status_line(&status_line, &status_ok)) {
+    pointer = parse_status_line(buffer, buffer_size, status_line, HEADER_LINE_LENGTH, &status_ok);
+    if (pointer < 0) {
         printf("Request failed: invalid response status code sent by server\n");
         return 0;
     }
 
+    /* default value for headers */
+    snprintf(header_content_length, HEADER_LINE_LENGTH, "Unknown");
+    snprintf(header_content_type, HEADER_LINE_LENGTH, "Unknown");
+    snprintf(header_last_modified, HEADER_LINE_LENGTH, "Unknown");
+
     /* read headers */
-    while (parse_header(&header, &value)) {
+    while ((i = parse_header(buffer + pointer, buffer_size - pointer,
+                             header, HEADER_LINE_LENGTH,
+                             value, HEADER_LINE_LENGTH)) > 0) {
+        pointer += i;
         if (strcmp(header, "Content-Length") == 0) {
-            header_content_length = value;
+            memcpy(header_content_length, value, HEADER_LINE_LENGTH);
         } else if (strcmp(header, "Content-Type") == 0) {
-            header_content_type = value;
+            memcpy(header_content_type, value, HEADER_LINE_LENGTH);
         } else if (strcmp(header, "Last-Modified") == 0) {
-            header_last_modified = value;
+            memcpy(header_last_modified, value, HEADER_LINE_LENGTH);
         }
     }
 
-    if (!read_separator()) {
+    i = read_separator(buffer + pointer, buffer_size - pointer);
+    if (i < 0) {
         printf("Request failed: invalid response sent by server\n");
         return 0;
     }
+    pointer += i;
 
     /* get current time */
     time(&curtime);
@@ -231,24 +242,6 @@ int handle_response(char *ip, char *filename) {
         return 1;
     }
 
-
-    /* refill buffer if there's nothing left */
-/*
-    if (response_pointer >= response_buffer_size) {
-        response_pointer = 0;
-        length = tcp_read(response_buffer, RESPONSE_BUFFER_SIZE);
-        if (length < 0) {
-            printf("Request failed: could not retrieve message body\n");
-            return 0;
-        }
-        if (length == 0) {
-//todo: should write empty file!!!!
-            printf("Empty message body\n");
-            return 0;
-        }
-    }
-*/
-
     /* open file for writing */
     if ((fp = fopen(filename, "w")) == (FILE *)0) {
         switch (errno) {
@@ -264,33 +257,19 @@ int handle_response(char *ip, char *filename) {
 
     do {
 
-        printf("buffer contains %d bytes!!!!\n", response_buffer_size);
-
         /* write buffer contents to file */
-        while (response_pointer < response_buffer_size) {
-            putc(response_buffer[response_pointer], fp);
-            response_pointer++;
+        while (pointer < buffer_size) {
+            putc(buffer[pointer], fp);
+            pointer++;
         }
-
-        /* refill buffer if it was filled completely */
-        /*
-          todo: this is a nasty bug. the idea is that we
-          expect more data when de buffer is completely
-          filled. but in theory it could be the case that
-          one buffer is EXACTLY the amount of data there
-          is to read. in that case, we do another
-          tcp_read which might fail and we assume we
-          miss part of the data. how to solve this?
-        */
-        /*if (response_buffer_size == RESPONSE_BUFFER_SIZE) {*/
 
         signal(SIGALRM, alarm_handler);
         alarm(TIME_OUT);
-        response_buffer_size = tcp_read(response_buffer, RESPONSE_BUFFER_SIZE);
+        buffer_size = tcp_read(buffer, RESPONSE_BUFFER_SIZE);
         alarm(0);
 
         /* failed reading */
-        if ((response_buffer_size < 0) || alarm_went_off) {
+        if ((buffer_size < 0) || alarm_went_off) {
             /*
               Actually, we should write to a temp file
               and delete it here. Only if all data is
@@ -306,9 +285,9 @@ int handle_response(char *ip, char *filename) {
             return 0;
         }
 
-        response_pointer = 0;
+        pointer = 0;
 
-    } while (response_buffer_size);
+    } while (buffer_size);
 
     fclose(fp);
 
@@ -319,11 +298,12 @@ int handle_response(char *ip, char *filename) {
 }
 
 
-/* 1 on success, 0 on failure */
+/* number of bytes read on success, -1 on failure */
 
-int get_response_header(void) {
+int get_response_header(char *buffer, int max_length) {
 
     int length;
+    int total_length = 0;
     int header_complete = 0;
 
     /* do tcp_read until we find \r\n\r\n in buffer */
@@ -332,50 +312,66 @@ int get_response_header(void) {
 
         signal(SIGALRM, alarm_handler);
         alarm(TIME_OUT);
-        length = tcp_read(response_buffer + response_buffer_size,
-                          RESPONSE_BUFFER_SIZE - response_buffer_size);
+        length = tcp_read(buffer + total_length,
+                          max_length - total_length);
         alarm(0);
 
         /* could not read any more bytes */
         if ((length < 1) || alarm_went_off) {
-            return 0;
+            return -1;
         }
 
         /* byte by byte search for '\r' */
         while (length > 0) {
 
-            /* todo:
-               here's a bug. if the \r\n\r\n sequence is devided
-               over two chunks of tcp_read data we won't find
-               them... */
-            if (response_buffer[response_buffer_size] == '\r') {
-                if ((length >= 4)
-                    && (response_buffer[response_buffer_size+1] == '\n')
-                    && (response_buffer[response_buffer_size+2] == '\r')
-                    && (response_buffer[response_buffer_size+3] == '\n')) {
-                    header_complete = 1;
-                    break;
+            if (buffer[total_length] == '\r') {
+
+                if (header_complete == 0
+                    || header_complete == 2) {
+                    header_complete++;
+                } else {
+                    header_complete = 0;
                 }
+
+            } else if (buffer[total_length] == '\n') {
+
+                if (header_complete == 1
+                    || header_complete == 3) {
+                    header_complete++;
+                } else {
+                    header_complete = 0;
+                }
+
+            } else {
+
+                header_complete = 0;
+
             }
 
-            response_buffer_size++;
+            if (header_complete == 4) {
+                break;
+            }
+
+            total_length++;
             length--;
 
         }
 
-        response_buffer_size += length;
+        total_length += length;
 
-    } while (!header_complete);
+    } while (header_complete < 4);
 
-    return 1;
+    return total_length;
 
 }
 
 
 /* 1 on success, 0 on failure */
 
-int parse_url(char *url, char **ip, char **filename) {
+int parse_url(char *url, char *ip, int ip_length, char *filename, int filename_length) {
 
+    char *ip_string;
+    char *filename_string;
     char *p = url;
 
     if (strlen(url) < 8) {
@@ -398,7 +394,7 @@ int parse_url(char *url, char **ip, char **filename) {
     p++;
 
     /* start of ip */
-    *ip = p;
+    ip_string = p;
 
     /* read ip */
     while (*p && *p != '/') p++;
@@ -412,7 +408,7 @@ int parse_url(char *url, char **ip, char **filename) {
     p++;
 
     /* start of filename */
-    *filename = p;
+    filename_string = p;
 
     /* check for empty filename */
     if (*p == '\0') {
@@ -427,6 +423,17 @@ int parse_url(char *url, char **ip, char **filename) {
         p++;
     }
 
+    /* copy ip */
+    if (strlen(ip_string) >= ip_length) {
+        return 0;
+    }
+    memcpy(ip, ip_string, strlen(ip_string) + 1);
+
+    /* copy ip */
+    if (strlen(filename_string) >= filename_length) {
+        return 0;
+    }
+    memcpy(filename, filename_string, strlen(filename_string) + 1);
 
     return 1;
 
@@ -459,62 +466,71 @@ int file_name_character(int c) {
 }
 
 
-/* 1 on success, 0 on failure */
+/* number of bytes parsed on success, -1 on failure */
 
-int parse_status_line(char **status_line, int *status_ok) {
+int parse_status_line(char *buffer, int buffer_size, char *status_line, int status_line_length, int *status_ok) {
 
     char *protocol;
+    int marker;
+    int pointer = 0;
 
     /* read spaces */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] == ' ')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] == ' ')) {
+        pointer++;
     }
 
     /* start of protocol */
-    protocol = response_buffer + response_pointer;
+    protocol = buffer + pointer;
 
     /* read protocol */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] != ' ')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != ' ')) {
+        pointer++;
     }
 
     /* check end of buffer */
-    if (response_pointer >= response_buffer_size) return 0;
+    if (pointer >= buffer_size) return -1;
 
     /* NULL terminate protocol */
-    response_buffer[response_pointer] = '\0';
-    response_pointer++;
+    buffer[pointer] = '\0';
+    pointer++;
 
     /* check for HTTP 1.0 protocol */
     if (strcmp(protocol, PROTOCOL) != 0) {
-        return 0;
+        return -1;
     }
 
     /* read spaces */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] == ' ')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] == ' ')) {
+        pointer++;
     }
 
     /* start of status */
-    *status_line = response_buffer + response_pointer;
+    marker = pointer;
 
     /* read status number */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] != ' ')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != ' ')) {
+        pointer++;
     }
 
     /* check end of buffer */
-    if (response_pointer >= response_buffer_size) return 0;
+    if (pointer >= buffer_size) return -1;
 
     /* NULL terminate status number */
-    response_buffer[response_pointer] = '\0';
+    buffer[pointer] = '\0';
+    pointer++;
+
+    /* copy status code */
+    if ((pointer - marker) > status_line_length) {
+        return -1;
+    }
+    memcpy(status_line, buffer + marker, (pointer - marker));
 
     /* check for happiness */
-    if (strcmp(*status_line, "200") == 0) {
+    if (strcmp(status_line, "200") == 0) {
         /* this is happy enough */
         *status_ok = 1;
     } else {
@@ -522,42 +538,49 @@ int parse_status_line(char **status_line, int *status_ok) {
     }
 
     /* put space back, we need the original status line */
-    response_buffer[response_pointer] = ' ';
-    response_pointer++;
+    buffer[pointer-1] = ' ';
 
     /* read status line */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] != '\r')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != '\r')) {
+        pointer++;
     }
 
     /* skip to '\n' */
-    response_pointer++;
+    pointer++;
 
     /* check end of buffer */
-    if (response_pointer >= response_buffer_size) return 0;
+    if (pointer >= buffer_size) return -1;
 
-    if (response_buffer[response_pointer] != '\n') {
-        return 0;
+    if (buffer[pointer] != '\n') {
+        return -1;
     }
 
     /* end of status line */
-    response_buffer[response_pointer-1] = '\0';
+    buffer[pointer-1] = '\0';
+    pointer++;
 
-    response_pointer++;
+    /* copy status line */
+    if ((pointer - marker) > status_line_length) {
+        return -1;
+    }
+    memcpy(status_line, buffer + marker, (pointer - marker));
 
-    if (response_pointer >= response_buffer_size) {
-        return 0;
+    if (pointer >= buffer_size) {
+        return -1;
     }
 
-    return 1;
+    return pointer;
 
 }
 
 
-/* 1 on succes, 0 on failure */
+/* number of files parsed on succes, -1 on failure */
 
-int parse_header(char **header, char **value) {
+int parse_header(char *buffer, int buffer_size, char *header, int header_length, char *value, int value_length) {
+
+    int marker;
+    int pointer = 0;
 
     /*
       todo: a \r\n[space] is allowed to continue a
@@ -565,93 +588,108 @@ int parse_header(char **header, char **value) {
     */
 
     /* read spaces */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] == ' ')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] == ' ')) {
+        pointer++;
     }
 
     /* check for end of buffer */
-    if (response_pointer >= response_buffer_size) {
-        return 0;
+    if (pointer >= buffer_size) {
+        return -1;
     }
 
     /* check for \r */
-    if (response_buffer[response_pointer] == '\r') {
-        return 0;
+    if (buffer[pointer] == '\r') {
+        return -1;
     }
 
     /* start of header name */
-    *header = response_buffer + response_pointer;
+    marker = pointer;
 
     /* read header name */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] != ':')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != ':')) {
+        pointer++;
     }
 
     /* check for end of buffer */
-    if (response_pointer >= response_buffer_size) {
-        return 0;
+    if (pointer >= buffer_size) {
+        return -1;
     }
 
     /* end of header name */
-    response_buffer[response_pointer] = '\0';
-    response_pointer++;
+    buffer[pointer] = '\0';
+    pointer++;
+
+    /* copy header name */
+    if ((pointer - marker) > header_length) {
+        return -1;
+    }
+    memcpy(header, buffer + marker, (pointer - marker));
 
     /* read spaces */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] == ' ')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] == ' ')) {
+        pointer++;
     }
 
     /* start of header value */
-    *value = response_buffer + response_pointer;
+    marker = pointer;
 
     /* read header value */
-    while ((response_pointer < response_buffer_size)
-           && (response_buffer[response_pointer] != '\r')) {
-        response_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != '\r')) {
+        pointer++;
     }
 
     /* skip to '\n' */
-    response_pointer++;
+    pointer++;
 
     /* check for end of buffer */
-    if (response_pointer >= response_buffer_size) {
-        return 0;
+    if (pointer >= buffer_size) {
+        return -1;
     }
 
-    if (response_buffer[response_pointer] != '\n') {
-        return 0;
+    if (buffer[pointer] != '\n') {
+        return -1;
     }
 
     /* end of header value */
-    response_buffer[response_pointer-1] = '\0';
-    response_pointer++;
+    buffer[pointer-1] = '\0';
 
-    return 1;
+    /* copy header value */
+    if ((pointer - marker) > value_length) {
+        return -1;
+    }
+    memcpy(value, buffer + marker, (pointer - marker));
+
+    pointer++;
+
+    return pointer;
 
 }
 
 
-/* 1 on succes, 0 on failure */
+/* number of bytes read on succes, -1 on failure */
 
-int read_separator(void) {
+int read_separator(char *buffer, int buffer_size) {
+
+    int pointer = 0;
 
     /* check for end of buffer */
-    if ((response_pointer+1) >= response_buffer_size) {
-        return 0;
+    if ((pointer+1) >= buffer_size) {
+        return -1;
     }
 
     /* check for \r\n */
-    if ((response_buffer[response_pointer] != '\r')
-        && (response_buffer[response_pointer+1] != '\n')) {
-        return 0;
+    if ((buffer[pointer] != '\r')
+        && (buffer[pointer+1] != '\n')) {
+        return -1;
     }
 
     /* advance pointer to body */
-    response_pointer += 2;
+    pointer += 2;
 
-    return 1;
+    return pointer;
 
 }
