@@ -19,7 +19,7 @@
 
 
 #define SERVER_PORT 80
-#define TIME_OUT 5
+#define TIME_OUT 10
 #define REQUEST_BUFFER_SIZE 512
 #define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
 #define PROTOCOL "HTTP/1.0"
@@ -38,10 +38,13 @@ int add_to_buffer(void);
 static char response_buffer[RESPONSE_BUFFER_SIZE];
 static int response_length = 0;
 static int response_pointer = 0;
+static int alarm_went_off = 0;
 
 
 static void alarm_handler(int sig) {
     /* just return to interrupt */
+    printf("httpc alarm went off\n");
+    alarm_went_off = 1;
 }
 
 
@@ -55,7 +58,7 @@ int main(int argc, char** argv) {
     char *filename;
 
     if (argc < 2) {
-        printf("No url found.\nUsage: %s url\n", argv[0]);
+        printf("No url found\nUsage: %s url\n", argv[0]);
         return 1;
     }
 
@@ -143,10 +146,10 @@ int do_request(char *ip, char *filename) {
     do {
         sent = tcp_write(request_buffer + total_sent, request_length - total_sent);
         total_sent += sent;
-    } while (sent && total_sent < request_length);
+    } while ((sent > 0) && total_sent < request_length);
 
     /* sending data failed */
-    if (!sent) {
+    if (sent <= 0) {
         printf("Request failed: could not send request to server\n");
         return 0;
     }
@@ -177,7 +180,7 @@ int handle_response(char *ip, char *filename) {
 
     /* fill buffer with first part of response */
     if (!add_to_buffer()) {
-        printf("Request failed: could not retreive response from server\n");
+        printf("Request failed: could not retrieve response from server\n");
         return 0;
     }
 
@@ -222,13 +225,13 @@ int handle_response(char *ip, char *filename) {
     printf("  Document's mime type:       %s\n", header_content_type);
 
     if (!status_ok) {
-        printf("Since the status code was not '200 Ok', no data has been written\nto %s\n", filename);
+        printf("Since the status code was not '200 OK', no data has been written\nto %s\n", filename);
         return 1;
     }
 
     /* check for message body */
     if (response_length <= response_pointer) {
-        printf("No message body was present.\n");
+        printf("No message body was present\n");
         return 1;
     }
 
@@ -249,7 +252,21 @@ int handle_response(char *ip, char *filename) {
         /* refill buffer if it was filled completely */
         if (response_length == RESPONSE_BUFFER_SIZE) {
             response_length = 0;
-            add_to_buffer();
+            if (!add_to_buffer()) {
+                /*
+                  Actually, we should write to a temp file
+                  and delete it here. Only if all data is
+                  received, copy temp file to real file.
+                  But this is a problem if we have write
+                  rights on filename, but not to create
+                  temp file. So we leave this for the time
+                  being.                  
+                */
+                fclose(fp);
+                printf("Request failed: could not retrieve message body\n");
+                printf("Wrote partial message body to file: %s\n", filename);
+                return 0;
+            }
         } else {
             response_length = 0;
         }
@@ -522,25 +539,17 @@ int add_to_buffer(void) {
         return 1;
     }
 
-    do {
+    signal(SIGALRM, alarm_handler);
+    alarm(TIME_OUT);
+    length = tcp_read(response_buffer + response_length,
+                      RESPONSE_BUFFER_SIZE - response_length);
+    alarm(0);
 
-        /* fetch data */
-        signal(SIGALRM, alarm_handler);
-        alarm(TIME_OUT);
-        length = tcp_read(response_buffer + response_length,
-                          RESPONSE_BUFFER_SIZE - response_length);
-        alarm(0);
-
-        if (length > 0) {
-            response_length += length;
-        }
-
-    } while ((response_length < RESPONSE_BUFFER_SIZE)
-             && (length > 0));
-
-    if (length < 0) {
+    if ((length < 0) || alarm_went_off) {
         return 0;
     }
+
+    response_length += length;
 
     return 1;
 

@@ -79,10 +79,13 @@ int write_header(http_header header, char *value);
 
 static char response_buffer[RESPONSE_BUFFER_SIZE];
 static int response_buffer_size;
+static int alarm_went_off = 0;
 
 
 static void alarm_handler(int sig) {
     /* just return to interrupt */
+    printf("httpd alarm went off\n");
+    alarm_went_off = 1;
 }
 
 
@@ -93,12 +96,12 @@ int main(int argc, char** argv) {
     char *eth, *ip1, *ip2;
 
     if (argc < 2) {
-        printf("No www directory found.\nUsage: %s wwwdir\n", argv[0]);
+        printf("No www directory found\nUsage: %s wwwdir\n", argv[0]);
         return 1;
     }
 
     if (chdir(argv[1]) < 0) {
-        printf("Could not change dir to '%s'.\n", argv[1]);
+        printf("Could not change dir to '%s'\n", argv[1]);
         return 1;
     }
 
@@ -124,7 +127,7 @@ int main(int argc, char** argv) {
     /* do this after opening tcp socket, because we need access to /dev/eth */
     if (geteuid() == 0) {
         if (chroot(argv[1]) < 0) {
-            printf("Could not chroot to www directory.\n");
+            printf("Could not chroot to www directory\n");
             return 1;
         }
         /*
@@ -153,10 +156,10 @@ int main(int argc, char** argv) {
            }
         */
         if (setuid(UNPRIVILIGED_UID)) {
-            printf("Could not change to user `nobody'.\n");
+            printf("Could not change to user `nobody'\n");
             return 1;
         }
-        printf("Changed root and uid.\n");
+        printf("Changed root and uid\n");
     }
 
 
@@ -164,7 +167,7 @@ int main(int argc, char** argv) {
 
     /* keep calling serve() until it fails, then exit with error code */
     while (serve()) { }
-    printf("Listening failed.\n");
+    printf("Listening failed");
     return 1;
 
 #else
@@ -191,6 +194,7 @@ int serve(void) {
     char *protocol;
 
     response_buffer_size = 0;
+    alarm_went_off = 0;
 
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
         return 0;
@@ -203,7 +207,7 @@ int serve(void) {
     request_length = tcp_read(request_buffer, REQUEST_BUFFER_SIZE);
     alarm(0);
 
-    if (request_length < 1) {
+    if ((request_length < 1) || alarm_went_off) {
         return 1;
     }
 
@@ -741,10 +745,10 @@ int send_buffer() {
     do {
         sent = tcp_write(response_buffer + total_sent, response_buffer_size - total_sent);
         total_sent += sent;
-    } while (sent && total_sent < response_buffer_size);
+    } while ((sent > 0) && total_sent < response_buffer_size);
 
     /* sending data failed */
-    if (!sent) return 0;
+    if (sent <= 0) return 0;
 
     response_buffer_size = 0;
 
