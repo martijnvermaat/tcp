@@ -23,7 +23,7 @@ echo "Starting automated tests" >> $OUTPUT
 echo `date` >> $OUTPUT
 echo >> $OUTPUT
 
-for i in $( ls build/ ); do
+for i in $( ls build/ | grep -v svn ); do
 
     echo "* Test $i.c" >> $OUTPUT
     build/$i > /dev/null 2>> $OUTPUT ; sleep .2
