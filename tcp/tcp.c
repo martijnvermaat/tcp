@@ -34,8 +34,8 @@ int send_ack(void);
 int send_fin(void);
 int do_packet(void);
 void handle_ack(tcp_u8t flags, tcp_u32t ack_nr);
-void handle_data(char *data, int data_size, tcp_u32t seq_nr, int push);
-void handle_syn(ipaddr_t their_ip, tcp_u16t src_port, tcp_u32t seq_nr, tcp_u8t flags);
+void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size);
+void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip, tcp_u16t src_port);
 void handle_fin(tcp_u8t flags, tcp_u32t seq_nr);
 void declare_event(event_t e);
 state_t get_state(void);
@@ -346,7 +346,9 @@ int tcp_write(const char *buf, int len){
     } else {
         return len - bytes_left;
     }
+
 }
+
 
 /* ----------------------------------- */
 /*              STATE TIER             */
@@ -358,18 +360,16 @@ int do_packet(void) {
     tcp_u16t src_port, dst_port, win_sz;
     tcp_u32t seq_nr, ack_nr;
     tcp_u8t flags;
-    /* todo: put data in receive buffer */
     char data[MAX_TCP_DATA];
     int data_sz = 0, rcvd;
     
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
-    if (rcvd != -1 && dst_port == tcb.our_port){
+    if (rcvd != -1 && dst_port == tcb.our_port && src_port == tcb.their_port){
 
-        /* todo check src port number */
         handle_ack(flags, ack_nr);
-        handle_data(data, data_sz, seq_nr, (PSH_FLAG & flags));
-        handle_syn(their_ip, src_port, seq_nr, flags);
+        handle_data(flags, seq_nr, data, data_sz);
+        handle_syn(flags, seq_nr, their_ip, src_port);
         handle_fin(flags, seq_nr);
     }
     
@@ -413,7 +413,7 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
 
 
 
-void handle_data(char *data, int data_size, tcp_u32t seq_nr, int push) {
+void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
     int fresh_data_start, fresh_data_size, 
         size, first_size, free_buffer_space;
@@ -478,8 +478,12 @@ void handle_data(char *data, int data_size, tcp_u32t seq_nr, int push) {
             }
 
             tcb.rcvd_data_size += size;
-            tcb.rcvd_data_psh = tcb.rcvd_data_size;
             tcb.their_seq_nr += size;
+
+            if (PSH_FLAG & flags) {
+                tcb.rcvd_data_psh = tcb.rcvd_data_size;
+            }
+
             printf("\n%s: handle_data: size: %d",inet_ntoa(my_ipaddr),size);
             printf("\n%s: handle_data: rcvd_data_size: %u",inet_ntoa(my_ipaddr),tcb.rcvd_data_size);
 
@@ -500,7 +504,7 @@ void handle_data(char *data, int data_size, tcp_u32t seq_nr, int push) {
 }
 
 
-void handle_syn(ipaddr_t their_ip, tcp_u16t src_port, tcp_u32t seq_nr, tcp_u8t flags) {
+void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip, tcp_u16t src_port) {
 
     if (!(SYN_FLAG & flags)){
         return;
