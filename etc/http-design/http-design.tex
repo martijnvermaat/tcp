@@ -138,7 +138,7 @@ partial data will still be written to a file, but the user will be notified of
 this.
 
 
-\subsection{Data buffers}
+\subsection{Data buffers}\label{sec:clientbuffers}
 
 In the client, we have one central buffer, the response buffer. Assembling the
 client HTTP request is not much work, the buffer used for it is local in the
@@ -151,6 +151,12 @@ location in the buffer and the remaining size of the buffer. During processing
 of the response message body, new data is read from the server and put in the
 buffer whenever the entire buffer is processed. This is done until there is no
 more data to read; the end of the stream is reached.
+
+During processing of the response message header, no further copying of data
+from the network to the buffer is done. This implies that the response message
+header should always fit in the response data buffer. Although this is
+certainly a shortcomming of the implementation, we think it is safe to assume
+the response message header will never be more than, say, two kilobytes.
 
 
 \section{HTTP server}
@@ -205,7 +211,24 @@ not sent).
 
 \subsection{Data buffers}
 
-xxx
+\paragraph{Request message data}
+
+In our HTTP server, the buffer for the request message data is a local buffer
+in the \lstinline|server| method. It is filled once with data from the client,
+and then processed. Just like we noted about the response buffer in the HTTP
+client (subsection \ref{sec:clientbuffers}), this means the full HTTP request
+message header should always fit in the response buffer.
+
+\paragraph{Response message data}
+
+The response message data is stored in a global buffer. We decided to use a
+global buffer because a lot of methods make references to it and it is needed
+during almost the entire lifetime of the server execution. Data to be sent to
+the client is written to the buffer with the \lstinline|write_data|
+method. This method checks if there is enough free space left in the buffer,
+and if not, it first sends the data in the buffer to the client and tries
+again. This way, there is no limit on the amount of data we can send, because
+it will not have to be stored in a buffer all at the same time.
 
 
 \subsection{Running as superuser}
@@ -255,11 +278,6 @@ unreliable network, we used libip\_udp by Marten Klencke and Erik
 Bosman. libip\_udp is a simulation of the IP implementation provided on Minix
 for the Linux environment. It supports easy testing with different amounts of
 packetloss.
-
-
-\section{Further reading}
-
-
 
 
 \end{document}

@@ -42,7 +42,7 @@
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpd/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
-#define REQUEST_BUFFER_SIZE 512      /* full request header should fit */
+#define REQUEST_BUFFER_SIZE 1024     /* full request header should fit */
 #define RESPONSE_BUFFER_SIZE 80000
 #define MAX_PATH_LENGTH 255
 #define URL_LENGTH 255
