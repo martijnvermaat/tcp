@@ -38,12 +38,14 @@
 #define LISTEN_PORT 80
 #define UNPRIVILIGED_GID 99 /* group nobody on minix is 99 */
 #define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
-#define MAX_PATH_LENGTH 100
 #define TIME_OUT 5
-#define REQUEST_BUFFER_SIZE 512 /* request header should fit */
-#define RESPONSE_BUFFER_SIZE 80000
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpd.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
+
+/* Buffer sizes */
+#define REQUEST_BUFFER_SIZE 512 /* request header should fit */
+#define RESPONSE_BUFFER_SIZE 80000
+#define MAX_PATH_LENGTH PATH_MAX
 
 
 typedef enum {
@@ -66,7 +68,7 @@ typedef enum {
 
 
 int serve(void);
-int make_absolute_path(char *path, char *absolute);
+int make_absolute_path(char *path, char *absolute, int max_length);
 int get_request(void);
 int parse_request(http_method *method, char **url, char **protocol);
 int parse_url(char *url, char **filename, char **mimetype);
@@ -99,7 +101,7 @@ static void alarm_handler(int sig) {
 
 int main(int argc, char** argv) {
 
-    char *absolute_path;
+    char absolute_path[MAX_PATH_LENGTH];
     char *eth, *ip1, *ip2;
 
     if (argc < 2) {
@@ -130,7 +132,7 @@ int main(int argc, char** argv) {
     if (geteuid() == 0) {
         /* we could chroot here for safety, only it doesn't accept
            relative paths, so we won't bother for now... */
-        if (!make_absolute_path(argv[1], absolute_path)
+        if (!make_absolute_path(argv[1], absolute_path, MAX_PATH_LENGTH)
             || (chroot(argv[1]) < 0)
             || (chdir("/") < 0)) {
             printf("Could not chroot to www directory\n");
@@ -201,33 +203,36 @@ int main(int argc, char** argv) {
 
 /* 1 on success, 0 on failure */
 
-int make_absolute_path(char *path, char *absolute) {
+int make_absolute_path(char *path, char *absolute, int max_length) {
 
-    char absolute_path[MAX_PATH_LENGTH];
+    char cwd[MAX_PATH_LENGTH];
     int length;
+
+    /* check if it will ever fit */
+    if (strlen(path) >= maxlength) {
+        return 0;
+    }
 
     /* check if path is already absolute */
     if (*path == '/') {
-        absolute = path;
+        memcpy(absolute, path, strlen(path));
         return 1;
     }
 
     /* get current working dir */
-    if (getcwd(absolute_path, MAX_PATH_LENGTH) == NULL) {
+    if (getcwd(cwd, MAX_PATH_LENGTH) == NULL) {
         return 0;
     }
 
     /* copy path after current working dir */
-    length = snprintf(absolute_path + strlen(absolute_path),
-                      MAX_PATH_LENGTH,
-                      "/%s", path);
+    length = snprintf(absolute,
+                      max_length,
+                      "%s/%s", cwd, path);
 
     /* check if path was too long */
-    if (length >= MAX_PATH_LENGTH) {
+    if (length >= max_length) {
         return 0;
     }
-
-    absolute = absolute_path;
 
     return 1;
 
