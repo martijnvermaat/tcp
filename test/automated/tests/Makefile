@@ -13,6 +13,7 @@
 AR = aal
 RANLIB = touch
 
+
 CFLAGS  = -DDEBUG -Wall -I/usr/local/include/cn -I../../../tcp -I../../../ip -O0
 LDFLAGS = -L../../../ip -L../../../tcp -L/usr/local/lib -ltcp -lip -lcn
 

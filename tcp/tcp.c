@@ -13,6 +13,7 @@
 #define URG_FLAG 0x20
 
 
+
 /* States */
 typedef enum{
     S_START, S_CLOSED, S_CONNECTING, S_LISTEN, S_SYN_SENT, S_SYN_ACK_SENT,
@@ -970,6 +971,7 @@ int send_tcp_packet(ipaddr_t dst,
         fprintf(stderr,"%s: checksum error: 0x%x\n", inet_ntoa(my_ipaddr),tcp->checksum );
     }
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
+
 
     /*    fprintf(stderr, "%s: sending over ip: %d\n",inet_ntoa(my_ipaddr),tcp_sz);
     fflush(stderr);*/

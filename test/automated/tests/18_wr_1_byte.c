@@ -7,7 +7,6 @@
 #include <signal.h>
 #include "tcp.h"
 
-
 /*
   Test write_one_byte.c
 
