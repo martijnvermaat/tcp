@@ -7,15 +7,32 @@
 #include <signal.h>
 #include "tcp.h"
 
+
 /*
-  Decide if we use 'size' or
-  'length' or 'len' (for ALL code).
+  httpd.c
+  A simple HTTP/1.0 server.
+*/
+
+
+/*
+  Decide if we use 'size' or 'length' or 'len' (for ALL code).
+  Also for 'chars' and 'bytes'. (Be consistent.)
 */
 #define LISTEN_PORT 80
 #define TIME_OUT 5
 #define MAX_REQUEST_LENGTH 512
 #define MAX_RESPONSE_LENGTH 1024
 #define PROTOCOL "HTTP/1.0"
+
+typedef enum {
+    METHOD_GET, METHOD_HEAD, METHOD_POST, METHOD_PUT,
+    METHOD_DELETE, METHOD_EDIT, METHOD_OPTIONS,
+    METHOD_TRACE, METHOD_UNKNOWN
+} http_method;
+
+typedef enum {
+    PROTOCOL_HTTP10, PROTOCOL_HTTP11, PROTOCOL_UNKNOWN
+} http_protocol;
 
 typedef enum {
     STATUS_OK
@@ -26,13 +43,8 @@ typedef enum {
 } http_header;
 
 
-/*
-  httpd.c
-  A simple HTTP/1.0 server.
-*/
-
-
 int serve(void);
+int parse_request(char *request_buffer, http_method *method, char *url, http_protocol *protocol, char *headers);
 int response(void);
 int write_status(char *buffer, http_status status);
 int write_header(char *buffer, http_header header, char *value);
@@ -43,6 +55,8 @@ static void alarm_handler(int sig) {
     /* just return to interrupt */
 }
 
+
+/* 1 on failure, no return on success */
 
 int main(int argc, char** argv) {
 
@@ -85,10 +99,17 @@ int main(int argc, char** argv) {
 }
 
 
+/* 1 on success, 0 on failure */
+
 int serve(void) {
 
     char request_buffer[MAX_REQUEST_LENGTH];
     ipaddr_t saddr;
+
+    http_method method;
+    http_protocol protocol;
+    char *url;
+    char *headers;
 
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
         return 0;
@@ -101,8 +122,10 @@ int serve(void) {
     }
     alarm(0);
 
-    if (!response()) {
-        return 1;
+    if (parse_request(request_buffer, &method, url, &protocol, headers)) {
+        response();
+    } else {
+        /* 400 bad request (i think) */
     }
 
     if (tcp_close() != 0) {
@@ -118,6 +141,17 @@ int serve(void) {
 
 }
 
+
+/* 1 on success, 0 on failure */
+
+int parse_request(char *request_buffer, http_method *method, char *url, http_protocol *protocol, char *headers) {
+
+    return 1;
+
+}
+
+
+/* 1 on success, 0 on failure */
 
 int response(void) {
 
@@ -141,6 +175,8 @@ int response(void) {
 }
 
 
+/* number of bytes written */
+
 int write_status(char *buffer, http_status status) {
 
     char *status_string;
@@ -158,6 +194,8 @@ int write_status(char *buffer, http_status status) {
 }
 
 
+/* number of bytes written */
+
 int write_header(char *buffer, http_header header, char *value) {
 
     char *header_string;
@@ -173,22 +211,29 @@ int write_header(char *buffer, http_header header, char *value) {
 }
 
 
+/* number of bytes written */
+
 int write_body(char *buffer) {
 
-    char *file = "./test_response";
+    char *file = "tisvu";
     FILE *fp;
     int byte;
     int size = 0;
 
     size += sprintf(buffer + size, "\n");
 
+    /*
+      More error checking here if opening file goes well.
+      Also, we should check permissions, as we should always
+      return a Permission Denied on files not world-readable.
+      Re-read the guide for this some time...
+    */
     fp = fopen(file, "r");
 
     /*
       Actually, MAX_RESPONSE_LENGTH also includes header size, so this
-      check on size is not correct ;)
+      check on size is not correct at all ;)
     */
-
     while (
         ((byte = getc(fp)) != EOF)
         && (size < MAX_RESPONSE_LENGTH)
