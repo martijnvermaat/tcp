@@ -689,6 +689,7 @@ int send_syn(void) {
             declare_event(E_ACK_TIME_OUT);
         }
     }
+    declare_event(E_USER_TIME_OUT);
     return -1;
 }
 
@@ -837,6 +838,11 @@ void declare_event(event_t e) {
     } else if (s == S_SYN_SENT && e == E_SYN_ACK_RECEIVED) {
         tcb.state = S_ESTABLISHED;
         printf("%s: Event: E_SYN_ACK_RECEIVED, State to S_ESTABLISHED\n",inet_ntoa(my_ipaddr));
+        fflush(stdout);
+
+    } else if (s == S_SYN_SENT && e == E_ACK_TIME_OUT) {
+        tcb.state = S_CONNECTING;
+        printf("%s: Event: E_ACK_TIME_OUT, State to S_CONNECTING\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
         
     } else if (s == S_LISTEN && e == E_SYN_RECEIVED) {
