@@ -43,6 +43,32 @@ body. The message body is ended by closing the connection. This has some
 implications for both HTTP clients and servers we will discuss below.
 
 
+\subsection{Be liberal in what you expect \ldots}
+
+On several occasions, the HTTP specification notes that ideal implementation
+should try to accept messages that are only invalid because of trivial
+errors (if the results is unambiguous). For instance, each header line should
+be terminated by a carriage return and a newline. Implementations should be
+liberal in what the expect, in the sense that they should try to accept
+messages where header lines are only terminated by a newline.
+
+Although not everyone agrees with this approach, we do think it is a good way
+to build communicating programs. However, to keep our implementation as simple
+as possible, we did not go through extra trouble especially to be liberal in
+what we expect. So in a lot of cases, the HTTP server and clients are strict
+conforming to the specification, but in some cases they try to be nice to the
+other application.
+
+
+\subsection{\ldots and conservative in what you send}
+
+In contrast with the liberal attitude one should have on accepting incomming
+data, it is never a good thing to have the same attitude on the assembling of
+data you send, as this might break the other application. In both the HTTP
+client and server, we tried to conform with the specification as strict as
+possible. When in doubt, we are being conservative.
+
+
 \section{HTTP client}
 
 
@@ -154,6 +180,37 @@ In addition, before opening a file requested for by a client, the server will
 check the read permissions of the file. If the \lstinline|other| read bit is
 not set, the server will not open the file and return a ``404 Not Found''
 response message.
+
+
+\subsection{Other HTTP methods}
+
+Besides the \lstinline|GET| method, HTTP/1.0 defines several other
+methods. Our server responds to these requests with a ``501 Not Implemented''
+response message, because indeed, the only method implemented is the
+\lstinline|GET| method. Implementing some of the other methods, however, is
+trivial. For example, just add a \lstinline|add_put| method to handle
+\lstinline|PUT| requests on which the \lstinline|write_response| method can
+dispatch.
+
+
+\section{Testing the implementations}
+
+\paragraph{Automated testing}
+
+For the HTTP client and server, we have not automated test suite. This was not
+really a deliberate decission of ours, but rather the result of too little
+time. However, since the functionality of the server and especially the client
+is pretty limited, in the end we think manual testing was good enough for us.
+
+\paragraph{Manual testing}
+
+To test if files were transfered correctly, we calculated MD5 checksums of the
+files before and after sending and compared the results. To simulate an
+unreliable network, we used libip\_udp by Marten Klencke and Erik
+Bosman. libip\_udp is a simulation of the IP implementation provided on Minix
+for the Linux environment. It supports easy testing with different amounts of
+packetloss.
+
 
 \section{Further reading}
 
