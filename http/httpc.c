@@ -1,3 +1,25 @@
+/*
+  Tiny httpc
+  A tiny HTTP/1.0 client
+
+
+  Laurens Bronwasser, lmbronwa@cs.vu.nl
+  http://www.cs.vu.nl/~lmbronwa/
+
+  Martijn Vermaat, mvermaat@cs.vu.nl
+  http://www.cs.vu.nl/~mvermaat/
+
+
+  Usage:
+
+  $ ./httpc http://xxx.xxx.xxx.xxx/abc
+
+  where
+    xxx.xxx.xxx.xxx is IP address of server
+    abc is the filename to retreive
+*/
+
+
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -11,35 +33,30 @@
 #include "tcp.h"
 
 
-/*
-  httpc.c
-  A tiny HTTP/1.0 client.
-
-  See http://www.w3.org/Protocols/HTTP/1.0/draft-ietf-http-spec.html
-  for a reference guide.
-*/
-
-
 #define SERVER_PORT 80
-#define TIME_OUT 10
+#define TIME_OUT 5
 #define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"
 #define PROTOCOL "HTTP/1.0"
-#define VERSION "Tiny httpc.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
+#define VERSION "Tiny httpc/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
-#define REQUEST_BUFFER_SIZE 512  /* request should fit */
-#define RESPONSE_BUFFER_SIZE 1024  /* response header should always fit */
+#define REQUEST_BUFFER_SIZE 512     /* full request header should fit */
+#define RESPONSE_BUFFER_SIZE 64000  /* full response header should fit */
 #define IP_LENGTH 18
 #define FILENAME_LENGTH 255
-#define HEADER_LINE_LENGTH 200  /* used for a lot of small temporary buffers */
+#define HEADER_LINE_LENGTH 200      /* used for some small temporary buffers */
+#define CLOSE_READ_BUFFER_SIZE 1024
 
 
 int do_request(char *ip, char *filename);
 int handle_response(char *ip, char *filename);
 int get_response_header(char *buffer, int max_length);
-int parse_url(char *url, char *ip, int ip_length, char *filename, int filename_length);
+int parse_url(char *url, char *ip, int ip_length, char *filename,
+              int filename_length);
 int file_name_character(int c);
-int parse_status_line(char *buffer, int buffer_size, char *status_line, int status_line_length, int *status_ok);
-int parse_header(char *buffer, int buffer_size, char *header, int header_length, char *value, int value_length);
+int parse_status_line(char *buffer, int buffer_size, char *status_line,
+                      int status_line_length, int *status_ok);
+int parse_header(char *buffer, int buffer_size, char *header, int header_length,
+                 char *value, int value_length);
 int read_separator(char *buffer, int buffer_size);
 
 
@@ -47,12 +64,13 @@ static int alarm_went_off = 0;
 
 
 static void alarm_handler(int sig) {
-    /* just return to interrupt */
     alarm_went_off = 1;
 }
 
 
-/* 0 on success, otherwise failure */
+/*
+  Returns: 0 on success, otherwise failure
+*/
 
 int main(int argc, char** argv) {
 
@@ -60,7 +78,8 @@ int main(int argc, char** argv) {
 
     char ip[IP_LENGTH];
     char filename[FILENAME_LENGTH];
-
+    char buffer[CLOSE_READ_BUFFER_SIZE];
+ 
     if (argc < 2) {
         printf("No url found\nUsage: %s url\n", argv[0]);
         return 1;
@@ -74,7 +93,7 @@ int main(int argc, char** argv) {
 
     ip1 = getenv("IP1");
     ip2 = getenv("IP2");
-    if ((!ip1)||(!ip2)) {
+    if (!ip1 || !ip2) {
         fprintf(stdout, "The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
@@ -114,19 +133,20 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-/*
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    while (tcp_read(response_buffer, RESPONSE_BUFFER_SIZE) > 0) {}
+    while (tcp_read(buffer, RESPONSE_BUFFER_SIZE) > 0) {}
     alarm(0);
-*/
 
     return 0;
 
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Send HTTP GET request to server
+  Returns: 1 on success, 0 on failure
+*/
 
 int do_request(char *ip, char *filename) {
 
@@ -141,8 +161,8 @@ int do_request(char *ip, char *filename) {
                               "GET /%s %s\r\nUser-Agent: %s\r\n\r\n",
                               filename, PROTOCOL, VERSION);
 
-    if ((request_length < 0)
-        || (request_length >= REQUEST_BUFFER_SIZE)) {
+    if (request_length < 0
+        || request_length >= REQUEST_BUFFER_SIZE) {
         printf("Filename too long: %s\n", filename);
         return 0;
     }
@@ -161,7 +181,10 @@ int do_request(char *ip, char *filename) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Receive response from server and process it
+  Returns: 1 on success, 0 on failure
+*/
 
 int handle_response(char *ip, char *filename) {
 
@@ -176,13 +199,12 @@ int handle_response(char *ip, char *filename) {
     char value[HEADER_LINE_LENGTH];
     int status_ok;
 
-    char header_content_length[HEADER_LINE_LENGTH];// = "Unknown";
-    char header_content_type[HEADER_LINE_LENGTH]; // = "Unknown";
-    char header_last_modified[HEADER_LINE_LENGTH];// = "Unknown";
+    char header_content_length[HEADER_LINE_LENGTH];
+    char header_content_type[HEADER_LINE_LENGTH];
+    char header_last_modified[HEADER_LINE_LENGTH];
 
     time_t curtime;
-#define TIME_LENGTH 32
-    char current_time[TIME_LENGTH];
+    char current_time[HEADER_LINE_LENGTH];
 
     FILE *fp;
 
@@ -194,7 +216,8 @@ int handle_response(char *ip, char *filename) {
     }
 
     /* read status line */
-    pointer = parse_status_line(buffer, buffer_size, status_line, HEADER_LINE_LENGTH, &status_ok);
+    pointer = parse_status_line(buffer, buffer_size, status_line,
+                                HEADER_LINE_LENGTH, &status_ok);
     if (pointer < 0) {
         printf("Request failed: invalid response status code sent by server\n");
         return 0;
@@ -228,8 +251,10 @@ int handle_response(char *ip, char *filename) {
 
     /* get current time */
     time(&curtime);
-    strftime(current_time, TIME_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
+    strftime(current_time, HEADER_LINE_LENGTH, DATE_TIME_FORMAT,
+             gmtime(&curtime));
 
+    /* print some output */
     printf("Request sent to http server at %s. Received response:\n", ip);
     printf("  The return code was:        %s\n", status_line);
     printf("  Date of retrieval:          %s\n", current_time);
@@ -238,7 +263,8 @@ int handle_response(char *ip, char *filename) {
     printf("  Document's mime type:       %s\n", header_content_type);
 
     if (!status_ok) {
-        printf("Since the status code was not '200 OK', no data has been written\nto %s\n", filename);
+        printf("Since the status code was not '200 OK', no data has been written\nto %s\n",
+               filename);
         return 1;
     }
 
@@ -255,6 +281,7 @@ int handle_response(char *ip, char *filename) {
         }
     }
 
+    /* read until end of stream */
     do {
 
         /* write buffer contents to file */
@@ -269,7 +296,8 @@ int handle_response(char *ip, char *filename) {
         alarm(0);
 
         /* failed reading */
-        if ((buffer_size < 0) || alarm_went_off) {
+        if (buffer_size < 0
+            || alarm_went_off) {
             /*
               Actually, we should write to a temp file
               and delete it here. Only if all data is
@@ -298,7 +326,10 @@ int handle_response(char *ip, char *filename) {
 }
 
 
-/* number of bytes read on success, -1 on failure */
+/*
+  Read response from server until at leas the header is in
+  Returns: number of bytes read on success, -1 on failure
+*/
 
 int get_response_header(char *buffer, int max_length) {
 
@@ -317,7 +348,8 @@ int get_response_header(char *buffer, int max_length) {
         alarm(0);
 
         /* could not read any more bytes */
-        if ((length < 1) || alarm_went_off) {
+        if (length < 1
+            || alarm_went_off) {
             return -1;
         }
 
@@ -366,9 +398,13 @@ int get_response_header(char *buffer, int max_length) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Parses IP and filename from url
+  Returns: 1 on success, 0 on failure
+*/
 
-int parse_url(char *url, char *ip, int ip_length, char *filename, int filename_length) {
+int parse_url(char *url, char *ip, int ip_length, char *filename,
+              int filename_length) {
 
     char *ip_string;
     char *filename_string;
@@ -440,7 +476,10 @@ int parse_url(char *url, char *ip, int ip_length, char *filename, int filename_l
 }
 
 
-/* 1 if char is valid in filename, 0 otherwise */
+/*
+  Check if character is valid in a filename
+  Returns: 1 if char is valid in filename, 0 otherwise
+*/
 
 int file_name_character(int c) {
 
@@ -466,17 +505,21 @@ int file_name_character(int c) {
 }
 
 
-/* number of bytes parsed on success, -1 on failure */
+/*
+  Parses status line and status code from response header
+  Returns: number of bytes parsed on success, -1 on failure
+*/
 
-int parse_status_line(char *buffer, int buffer_size, char *status_line, int status_line_length, int *status_ok) {
+int parse_status_line(char *buffer, int buffer_size, char *status_line,
+                      int status_line_length, int *status_ok) {
 
     char *protocol;
     int marker;
     int pointer = 0;
 
     /* read spaces */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] == ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] == ' ') {
         pointer++;
     }
 
@@ -484,8 +527,8 @@ int parse_status_line(char *buffer, int buffer_size, char *status_line, int stat
     protocol = buffer + pointer;
 
     /* read protocol */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != ' ') {
         pointer++;
     }
 
@@ -502,8 +545,8 @@ int parse_status_line(char *buffer, int buffer_size, char *status_line, int stat
     }
 
     /* read spaces */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] == ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] == ' ') {
         pointer++;
     }
 
@@ -511,8 +554,8 @@ int parse_status_line(char *buffer, int buffer_size, char *status_line, int stat
     marker = pointer;
 
     /* read status number */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != ' ') {
         pointer++;
     }
 
@@ -541,8 +584,8 @@ int parse_status_line(char *buffer, int buffer_size, char *status_line, int stat
     buffer[pointer-1] = ' ';
 
     /* read status line */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != '\r')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != '\r') {
         pointer++;
     }
 
@@ -575,9 +618,13 @@ int parse_status_line(char *buffer, int buffer_size, char *status_line, int stat
 }
 
 
-/* number of files parsed on succes, -1 on failure */
+/*
+  Parses next header name and value from response header
+  Returns: number of files parsed on succes, -1 on failure
+*/
 
-int parse_header(char *buffer, int buffer_size, char *header, int header_length, char *value, int value_length) {
+int parse_header(char *buffer, int buffer_size, char *header, int header_length,
+                 char *value, int value_length) {
 
     int marker;
     int pointer = 0;
@@ -588,8 +635,8 @@ int parse_header(char *buffer, int buffer_size, char *header, int header_length,
     */
 
     /* read spaces */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] == ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] == ' ') {
         pointer++;
     }
 
@@ -607,8 +654,8 @@ int parse_header(char *buffer, int buffer_size, char *header, int header_length,
     marker = pointer;
 
     /* read header name */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != ':')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != ':') {
         pointer++;
     }
 
@@ -628,8 +675,8 @@ int parse_header(char *buffer, int buffer_size, char *header, int header_length,
     memcpy(header, buffer + marker, (pointer - marker));
 
     /* read spaces */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] == ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] == ' ') {
         pointer++;
     }
 
@@ -637,8 +684,8 @@ int parse_header(char *buffer, int buffer_size, char *header, int header_length,
     marker = pointer;
 
     /* read header value */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != '\r')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != '\r') {
         pointer++;
     }
 
@@ -670,7 +717,10 @@ int parse_header(char *buffer, int buffer_size, char *header, int header_length,
 }
 
 
-/* number of bytes read on succes, -1 on failure */
+/*
+  Read header/body separator from response
+  Returns: number of bytes read on succes, -1 on failure
+*/
 
 int read_separator(char *buffer, int buffer_size) {
 
@@ -682,8 +732,8 @@ int read_separator(char *buffer, int buffer_size) {
     }
 
     /* check for \r\n */
-    if ((buffer[pointer] != '\r')
-        && (buffer[pointer+1] != '\n')) {
+    if (buffer[pointer] != '\r'
+        && buffer[pointer+1] != '\n') {
         return -1;
     }
 

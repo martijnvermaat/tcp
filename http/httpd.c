@@ -1,3 +1,24 @@
+/*
+  Tiny httpd
+  A tiny HTTP/1.0 server
+
+
+  Laurens Bronwasser, lmbronwa@cs.vu.nl
+  http://www.cs.vu.nl/~lmbronwa/
+
+  Martijn Vermaat, mvermaat@cs.vu.nl
+  http://www.cs.vu.nl/~mvermaat/
+
+
+  Usage:
+
+  $ ./httpd wwwdir
+
+  where
+    wwwdir is the path to your www directory
+*/
+
+
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -14,30 +35,14 @@
 #include "tcp.h"
 
 
-/*
-  httpd.c
-  A tiny HTTP/1.0 server.
-
-  See http://www.w3.org/Protocols/HTTP/1.0/draft-ietf-http-spec.html
-  for a reference guide.
-*/
-
-
-/*
-  todo: determine which headers are obligatory and which are not!
-  todo: think about $IP1, $IP2, and $ETH: I don't think we need
-        al these to be set. how will they test our programs?
-*/
-
-
 #define KEEP_SERVING 1
 #define LISTEN_PORT 80
 #define TIME_OUT 5
-#define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"  /* RFC 1123 */
+#define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"  /* as in RFC 1123 */
 #define PROTOCOL "HTTP/1.0"
-#define VERSION "Tiny httpd.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
+#define VERSION "Tiny httpd/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
-#define REQUEST_BUFFER_SIZE 512  /* the full request header should always fit */
+#define REQUEST_BUFFER_SIZE 512  /* full request header should fit */
 #define RESPONSE_BUFFER_SIZE 80000
 #define MAX_PATH_LENGTH 255
 #define URL_LENGTH 255
@@ -128,6 +133,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    /* todo: call tcp_socket for each connection */
     if (tcp_socket() != 0) {
         printf("HTTPD: Opening socket failed\n");
         return 1;
