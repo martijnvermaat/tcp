@@ -65,6 +65,7 @@ typedef struct tcb {
     char rcv_data[BUFFER_SIZE+1];  /* why +1 ? */
     int rcvd_data_start;
     int rcvd_data_size;
+    int rcvd_data_psh;   /* number of bytes to push, always aligned to start of buffer */
     char *unacked_data;
     int unacked_data_len;
     state_t state;
@@ -126,6 +127,7 @@ void print_buffer(void) {
     int i;
     
     printf("\n\nBuffer contains %d/%d bytes starting at %d\n", tcb.rcvd_data_size, BUFFER_SIZE, tcb.rcvd_data_start);
+    printf("Of this, %d bytes have to be pushed\n", tcb.rcvd_data_psh);
     printf("Buffer contains:\n\n");
     
     for (i=0; i<BUFFER_SIZE; i++) {
@@ -243,7 +245,11 @@ int tcp_read(char *buf, int maxlen) {
 
     read_bytes = min(maxlen, BUFFER_SIZE);
 
-    while (tcb.rcvd_data_size < read_bytes) {
+    /*
+      While there's no data we have to push AND there's room to read more:
+      handle incomming packets
+    */
+    while (tcb.rcvd_data_psh == 0 && tcb.rcvd_data_size < read_bytes) {
         printf("\n%s: read calling do_packet()\n", inet_ntoa(my_ipaddr));
         fflush(stdout);
         do_packet();
@@ -263,6 +269,7 @@ int tcp_read(char *buf, int maxlen) {
 
     /* adjust buffer pointers */
     tcb.rcvd_data_size -= deliver_bytes;
+    tcb.rcvd_data_psh = min(tcb.rcvd_data_psh - deliver_bytes, 0);
     tcb.rcvd_data_start = (tcb.rcvd_data_start + deliver_bytes) % BUFFER_SIZE;
 
     printf("\n\ntcp_read: read %d bytes: %s\n\n", deliver_bytes, buf);
@@ -325,7 +332,7 @@ int do_packet(void) {
 
         /* todo check src port number */
         handle_ack(flags, ack_nr);
-        handle_data(data, data_sz, seq_nr);
+        handle_data(data, data_sz, seq_nr, (PSH_FLAG & flags));
         handle_syn(their_ip, src_port, seq_nr, flags);
         handle_fin(flags, seq_nr);
     }
@@ -370,7 +377,7 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
 
 
 
-void handle_data(char *data, int data_size, tcp_u32t seq_nr) {
+void handle_data(char *data, int data_size, tcp_u32t seq_nr, int push) {
 
     int fresh_data_start, fresh_data_size, 
         size, first_size, free_buffer_space;
@@ -435,6 +442,7 @@ void handle_data(char *data, int data_size, tcp_u32t seq_nr) {
             }
 
             tcb.rcvd_data_size += size;
+            tcb.rcvd_data_psh = tcb.rcvd_data_size;
             tcb.their_seq_nr += size;
             printf("\n%s: handle_data: size: %d",inet_ntoa(my_ipaddr),size);
             printf("\n%s: handle_data: rcvd_data_size: %u",inet_ntoa(my_ipaddr),tcb.rcvd_data_size);
