@@ -150,6 +150,11 @@ int write_body(char *buffer) {
     /*
       This seems ok, but in the tests I'm not sure if the last byte
       of the file is transfered correctly...
+
+      Also, there are many ways to read a file. This does it byte by
+      byte (as it was the first method I got working properly).
+      Warning: some methods are no option because they can't handle
+      null bytes for example (e.g. fgets).
     */
 
     return size;
