@@ -576,7 +576,18 @@ int send_data(const char *buf, int len) {
         bytes_sent = send_tcp_packet(tcb.their_ipaddr, tcb.our_port, 
             tcb.their_port, tcb.our_seq_nr, tcb.ack_nr, flags, 1, buf, len);
         
-        /* todo: misschien moeten we dit er maar uit laten. */
+        /* todo: misschien moeten we dit er maar uit laten.
+
+          Redenen voor send_tcp_packet om -1 terug te geven:
+          * ip_init failed (kon eigen ip adres niet vaststellen)
+          * doel is op ander netwerk en er is geen gateway gevonden
+          * ethernet adres van doel kon niet vastgesteld worden
+          * eth_send failed
+
+          Dus eigenlijk kan het er wel in blijven, want de kans is niet
+          groot dat het de volgende loop iteratie wel lukt...
+        */
+
         if(bytes_sent == -1){
             printf("no bytes sent");
             fflush(stdout);
