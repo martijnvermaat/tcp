@@ -1,0 +1,8 @@
+#!/bin/sh
+clear
+cd ../tcp
+make clean
+make 
+cd ../test
+make clean
+make
