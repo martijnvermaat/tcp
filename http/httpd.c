@@ -34,7 +34,8 @@ typedef enum {
 } http_method;
 
 typedef enum {
-    STATUS_OK
+    STATUS_OK, STATUS_HTTP_VERSION_NOT_SUPPORTED,
+    STATUS_NOT_IMPLEMENTED
 } http_status;
 
 typedef enum {
@@ -43,10 +44,14 @@ typedef enum {
 
 
 int serve(void);
-int parse_request(char *request, http_method *method, char **url);
+int parse_request(char *request, http_method *method, char **url, char **protocol);
+int parse_url(char *url, char **filename, char **mimetype);
 int read_token(char *buffer, int buffer_length, char *token);
 int count_spaces(char *buffer, int buffer_length);
-int response(void);
+void write_response(char *buffer, http_method method, char *url, char *protocol);
+void send_response(char *buffer);
+int handle_get(char *buffer, char *url);
+int file_name_character(char *c);
 int write_status(char *buffer, http_status status);
 int write_header(char *buffer, http_header header, char *value);
 int write_body(char *buffer);
@@ -105,11 +110,13 @@ int main(int argc, char** argv) {
 int serve(void) {
 
     char request_buffer[MAX_REQUEST_LENGTH + 1]; /* +1 because we NULL term it */
+    char response_buffer[MAX_RESPONSE_LENGTH + 1]; /* +1 because we NULL term it */
     int request_length;
     ipaddr_t saddr;
 
     http_method method;
     char *url;
+    char *protocol;
 
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
         return 0;
@@ -127,12 +134,15 @@ int serve(void) {
     /* NULL terminate request buffer */
     request_buffer[request_length] = '\0';
 
-    if (parse_request(request_buffer, &method, &url)) {
-        response();
+    if (parse_request(request_buffer, &method, &url, &protocol)) {
+        write_response(response_buffer, method, url, protocol);
     } else {
         /* 400 bad request (i think) */
         printf("400 bad request!!!\n");
+        /* send_standard_headers() */
     }
+
+    send_response(response_buffer);
 
     if (tcp_close() != 0) {
         return 0;
@@ -150,10 +160,9 @@ int serve(void) {
 
 /* 1 on success, 0 on failure */
 
-int parse_request(char *request, http_method *method, char **url) {
+int parse_request(char *request, http_method *method, char **url, char **protocol) {
 
     char *method_string;
-    char *protocol_string;
 
     char *r = request;
 
@@ -193,7 +202,7 @@ int parse_request(char *request, http_method *method, char **url) {
     while (*r && *r == ' ') r++;
 
     /* start of protocol */
-    protocol_string = r;
+    *protocol = r;
 
     /* read protocol */
     while (*r && *r != ' ' && *r != '\r') r++;
@@ -226,9 +235,6 @@ int parse_request(char *request, http_method *method, char **url) {
         *method = METHOD_UNKNOWN;
     }
 
-    /* check for HTTP 1.0 protocol */
-    if (strcmp(protocol_string, "HTTP/1.0") != 0) return 0;
-
     return 1;
 
 }
@@ -236,25 +242,152 @@ int parse_request(char *request, http_method *method, char **url) {
 
 /* 1 on success, 0 on failure */
 
-int response(void) {
+void write_response(char *buffer, http_method method, char *url, char *protocol) {
 
-    char response_buffer[MAX_RESPONSE_LENGTH];
-    int response_length = 0;
+    int length = 0;
 
-    response_length += write_status(response_buffer + response_length, STATUS_OK);
+    /* check for HTTP 1.0 protocol */
+    if (strcmp(protocol, "HTTP/1.0") != 0) {
+        length += write_status(buffer, STATUS_HTTP_VERSION_NOT_SUPPORTED);
+        buffer[length] = '\0';
+        return;
+    }
 
-    response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "text/plain");
-    response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "text/html");
-    response_length += write_header(response_buffer + response_length, HEADER_ISLAND, "Goeree Overflakkee");
-    response_length += write_header(response_buffer + response_length, HEADER_SERVER, "Tiny httpd.c / 0.1 (maybe on Minix)");
+    /* add a handle_* procedure for each HTTP method */
+    switch (method) {
+        case METHOD_GET:
+            length += handle_get(buffer, url);
+            break;
+        default:
+            /* unsupported method */
+            length += write_status(buffer, STATUS_NOT_IMPLEMENTED);
+    }
 
-    response_length += write_body(response_buffer + response_length);
+    buffer[length] = '\0';
 
-    if (tcp_write(response_buffer, response_length) != response_length) {
-        return 0;
+    return;
+
+}
+
+
+/* number of bytes written */
+
+int handle_get(char *buffer, char *url) {
+
+    char *filename;
+    char *mimetype;
+
+    FILE *fp;
+    int byte;
+
+    int length;
+
+    if (!parse_url(url, &filename, &mimetype)) {
+        /* bad request */
+        return length;
+    }
+
+    /* we should also check file permissions here! */
+    if ((fp = fopen(filename, "r")) == (FILE *)0) {
+        /* bad request (could not open file) */
+        return length;
+    }
+
+    length += write_status(buffer, STATUS_OK);
+
+    length += write_header(buffer + length, HEADER_CONTENT_TYPE, mimetype);
+    length += write_header(buffer + length, HEADER_ISLAND, "Goeree Overflakkee");
+    length += write_header(buffer + length, HEADER_SERVER, "Tiny httpd.c / 0.1 (maybe on Minix)");
+
+    /* blank line between headers and body */
+    length += sprintf(buffer + length, "\r\n");
+
+    /* write file contents to response buffer */
+    while (
+        ((byte = getc(fp)) != EOF)
+        && (length < MAX_RESPONSE_LENGTH)
+        ) {
+        length += sprintf(buffer + length, "%c", byte);
+    }
+
+    return length;
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int parse_url(char *url, char **filename, char **mimetype) {
+
+    char *extension;
+    char *u = url;
+
+    /*
+      We don't support subdirectories or anything fancy
+      like that, so we only look for a simple filename.
+    */
+
+    /* check for leading slash */
+    if (*u != '/') return 0;
+    u++;
+
+    /* start of filename */
+    *filename = u;
+    extension = u;
+
+    /* filename must not be empty */
+    if (!(*u)) return 0;
+
+    /* read filename */
+    while (*u && file_name_character(u)) {
+        /* remember last . in filename */
+        if (*u == '.') extension = u;
+        u++;
+    }
+
+    /* check for end of url */
+    if (*u) return 0;
+
+    /* lookup mimetype based on file extension */
+    if (*extension == '.') {
+
+        if (strcmp(extension, ".html") == 0) {
+            *mimetype = "text/html";
+        } else if (strcmp(extension, ".jpg") == 0) {
+            *mimetype = "image/jpeg";
+        } else {
+            *mimetype = "text/plain";
+        }
+
+    } else {
+        *mimetype = "text/plain";
     }
 
     return 1;
+
+}
+
+
+/* 1 if char is valid in filename, 0 otherwise */
+
+int file_name_character(char *c) {
+
+    return 1;
+
+}
+
+
+/* just write everything to tcp */
+
+void send_response(char *buffer) {
+
+    int length = strlen(buffer);
+    int bytes_sent = 0;
+    int tries = 0;
+
+    while (tries++ < 10 && bytes_sent < length) {
+        tcp_write(buffer + bytes_sent, length - bytes_sent);
+    }
 
 }
 
@@ -266,11 +399,21 @@ int write_status(char *buffer, http_status status) {
     char *status_string;
     int status_code;
 
-    if (status == STATUS_OK) {
-        status_string = "OK";
-        status_code = 200;
-    } else {
-        return 0;
+    switch (status) {
+        case STATUS_OK:
+            status_string = "OK";
+            status_code = 200;
+            break;
+        case STATUS_HTTP_VERSION_NOT_SUPPORTED:
+            status_string = "HTTP version not supported";
+            status_code = 505;
+            break;
+        case STATUS_NOT_IMPLEMENTED:
+            status_string = "Not implemented";
+            status_code = 501;
+            break;
+        default:
+            return 0;
     }
 
     return sprintf(buffer, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
@@ -283,24 +426,40 @@ int write_status(char *buffer, http_status status) {
 int write_header(char *buffer, http_header header, char *value) {
 
     char *header_string;
+    int i;
 
     switch (header) {
         case HEADER_CONTENT_TYPE:
             header_string = "Content-Type";
+            break;
         case HEADER_SERVER:
             header_string = "Server";
+            break;
         case HEADER_ISLAND:
             header_string = "Nice-Island";
+            break;
         default:
             return 0;
     }
 
-    return sprintf(buffer, "%s: %s\r\n", header_string, value);
+    printf("1\n");
+
+    printf(header_string);
+    printf("\n");
+    printf(value);
+    printf("\n");
+
+    /* causes segfault */
+    i = sprintf(buffer, "%s: %s\r\n", header_string, value);
+
+    printf("2\n");
+
+    return i;
 
 }
 
 
-/* number of bytes written */
+/* number of bytes written, -1 in case of error */
 
 int write_body(char *buffer) {
 
