@@ -182,13 +182,20 @@ int tcp_socket(void) {
       Todo: this should initialize tcb and do
       nothing if called again
     */
+    void (*oldsig)(int);
+    unsigned old_timo;
 
     if (get_state() != S_START) {
         return -1;
     }
 
     if (!my_ipaddr){
+        /* todo: ip_init is hacking the user's alarm. What do we do?*/
+        oldsig = signal(SIGALRM, tcp_alarm);
+        old_timo = alarm(0);
         ip_init();
+        signal(SIGALRM, oldsig);
+        alarm(old_timo);
     }
     if (!my_ipaddr) {
         return -1;
@@ -260,9 +267,11 @@ int tcp_listen(int port, ipaddr_t *src) {
         alarm_went_of = 0;
         oldsig(SIGALRM);
         return -1;
+    } else {
+        /* restore old signal handler */
+        signal(SIGALRM, oldsig);
     }
     return 0;
-
 }
 
 
@@ -320,6 +329,9 @@ int tcp_read(char *buf, int maxlen) {
         /* reset alarm_went_of and call original alarm function */
         alarm_went_of = 0;
         oldsig(SIGALRM);
+    }  else {
+        /* restore old signal handler */
+        signal(SIGALRM, oldsig);
     }
 
     delivered_bytes = min(maxlen, tcb.rcvd_data_size);
@@ -341,7 +353,6 @@ int tcp_read(char *buf, int maxlen) {
     
     printf("\ntcp_read: read %d bytes: %s\n", delivered_bytes, buf);
     printf("tcb.received_data_psh to: %d\n", tcb.rcvd_data_psh);
-    /*ack_these_bytes(deliver_bytes);*/
 
     return delivered_bytes;
 

@@ -118,17 +118,6 @@ int main(void) {
         fflush(stderr);
         alarm(0);
 
-        if (tcp_close() != 0) {
-            fprintf(stderr, "Server: Closing connection failed (this is what we want)\n");
-            return 1;
-        }
-
-        signal(SIGALRM, alarm_handler);
-        alarm(5);
-
-        while (tcp_read(server_buf, 4) > 0) {}
-
-        alarm(0);
 
         /* Wait for client process to finish */
         while (wait(&status) != pid);

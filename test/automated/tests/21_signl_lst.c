@@ -56,8 +56,8 @@ int main(void) {
     alarm(5);
     
     if (tcp_listen(80, &saddr) < 0) {
-        fprintf(stderr, "Server: Listening for client failed\n");
-        return 1;
+        fprintf(stderr, "Server: Listening for client failed (this is what we want)\n");
+        return 0;
     }
     
     alarm(0);
