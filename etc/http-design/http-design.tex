@@ -1,0 +1,68 @@
+\documentclass[11pt]{article}
+\usepackage{listings}
+\usepackage[english]{babel}
+\usepackage{a4}
+\usepackage{latexsym}
+\usepackage[
+    colorlinks,
+    pdftitle={Design Document HTTP client and server},
+    pdfsubject={HTTP client and server},
+    pdfauthor={Laurens Bronwasser, Martijn Vermaat}
+]{hyperref}
+
+\title{Design Document HTTP client and server}
+\author{
+    Laurens Bronwasser and Martijn Vermaat\\
+    \{lmbronwa,mvermaat\}@cs.vu.nl
+}
+\date{31 januari 2005}
+
+\begin{document}
+\maketitle
+
+
+\lstset{
+  numbers=none,
+  basicstyle=\small,
+  frame=tb,
+  language=C,
+  captionpos=b
+}
+
+
+\section{General remarks}
+
+
+
+\section{HTTP client}
+
+
+\section{HTTP server}
+
+
+
+
+
+\begin{lstlisting}[title=Procedure tcp\_read]
+/*
+  *buf      Buffer to store data
+  maxlen    Maximum number of bytes to read
+
+  Returns number of bytes read.
+
+  This procedure is blocking.
+*/
+
+int tcp_read(char *buf, int maxlen) {
+
+    while ( buffer_empty() ) {
+        do_packet();
+    }
+
+    return copy_data(&buf, &maxlen);
+
+}
+\end{lstlisting}
+
+
+\end{document}
