@@ -45,7 +45,10 @@
 /* Buffer sizes */
 #define REQUEST_BUFFER_SIZE 512 /* request header should fit */
 #define RESPONSE_BUFFER_SIZE 80000
-#define MAX_PATH_LENGTH PATH_MAX
+#define MAX_PATH_LENGTH 255
+#define URL_LENGTH 255
+#define PROTOCOL_LENGTH 10
+#define MIME_TYPE_LENGTH 50
 
 
 typedef enum {
@@ -69,9 +72,9 @@ typedef enum {
 
 int serve(void);
 int make_absolute_path(char *path, char *absolute, int max_length);
-int get_request(void);
-int parse_request(http_method *method, char **url, char **protocol);
-int parse_url(char *url, char **filename, char **mimetype);
+int get_request(char *buffer, int max_length);
+int parse_request(char *buffer, int buffer_length, http_method *method, char *url, int url_length, char *protocol, int protocol_length);
+int parse_url(char *url, char *filename, int filename_length, char *mimetype, int mimetype_length);
 int write_response(http_method method, char *url, char *protocol);
 int send_buffer(void);
 int handle_get(char *url);
@@ -83,8 +86,6 @@ int write_general_headers(void);
 int write_header(http_header header, char *value);
 
 
-static char request_buffer[REQUEST_BUFFER_SIZE];
-static int request_buffer_size;
 static char response_buffer[RESPONSE_BUFFER_SIZE];
 static int response_buffer_size;
 static int alarm_went_off = 0;
@@ -106,6 +107,11 @@ int main(int argc, char** argv) {
 
     if (argc < 2) {
         printf("No www directory found\nUsage: %s wwwdir\n", argv[0]);
+        return 1;
+    }
+
+    if (chdir(argv[1]) < 0) {
+        printf("Could not change dir to '%s'\n", argv[1]);
         return 1;
     }
 
@@ -133,7 +139,7 @@ int main(int argc, char** argv) {
         /* we could chroot here for safety, only it doesn't accept
            relative paths, so we won't bother for now... */
         if (!make_absolute_path(argv[1], absolute_path, MAX_PATH_LENGTH)
-            || (chroot(argv[1]) < 0)
+            || (chroot(absolute_path) < 0)
             || (chdir("/") < 0)) {
             printf("Could not chroot to www directory\n");
             return 1;
@@ -173,13 +179,6 @@ int main(int argc, char** argv) {
         }
         */
         /*printf("Changed root and uid\n");*/
-    } else {
-        /* are not root, so instead of chroot do chdir */
-        /* chdir does not need an absolute dirname */
-        if (chdir(argv[1]) < 0) {
-            printf("Could not change dir to '%s'\n", argv[1]);
-            return 1;
-        }
     }
 
 
@@ -201,6 +200,7 @@ int main(int argc, char** argv) {
 }
 
 
+/* absolute path of file with current working dir */
 /* 1 on success, 0 on failure */
 
 int make_absolute_path(char *path, char *absolute, int max_length) {
@@ -209,7 +209,7 @@ int make_absolute_path(char *path, char *absolute, int max_length) {
     int length;
 
     /* check if it will ever fit */
-    if (strlen(path) >= maxlength) {
+    if (strlen(path) >= max_length) {
         return 0;
     }
 
@@ -245,24 +245,31 @@ int serve(void) {
 
     ipaddr_t saddr;
 
+    char request_buffer[REQUEST_BUFFER_SIZE];
+    int request_buffer_size = 0;
+
     http_method method;
-    char *url;
-    char *protocol;
+    char url[URL_LENGTH];
+    char protocol[PROTOCOL_LENGTH];
 
     response_buffer_size = 0;
-    request_buffer_size = 0;
     alarm_went_off = 0;
 
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
         return 0;
     }
 
-    if (!get_request()) {
+    request_buffer_size = get_request(request_buffer, REQUEST_BUFFER_SIZE);
+
+    if (request_buffer_size < 0) {
         tcp_close();
         return 1;
     }
 
-    if (parse_request(&method, &url, &protocol)) {
+    if (parse_request(request_buffer, request_buffer_size,
+                      &method,
+                      url, URL_LENGTH,
+                      protocol, PROTOCOL_LENGTH)) {
         if (!(write_response(method, url, protocol)
               && send_buffer())) {
             /*
@@ -300,11 +307,12 @@ int serve(void) {
 }
 
 
-/* 1 on success, 0 on failure */
+/* number of bytes read on success, -1 on failure */
 
-int get_request(void) {
+int get_request(char *buffer, int max_length) {
 
     int length;
+    int total_length = 0;
     int header_complete = 0;
 
     /* do tcp_read until we find \r\n\r\n in buffer */
@@ -313,137 +321,155 @@ int get_request(void) {
 
         signal(SIGALRM, alarm_handler);
         alarm(TIME_OUT);
-        length = tcp_read(request_buffer + request_buffer_size,
-                          REQUEST_BUFFER_SIZE - request_buffer_size);
+        length = tcp_read(buffer + total_length,
+                          max_length - total_length);
         alarm(0);
 
         /* could not read any more bytes */
-        if ((length < 1) || alarm_went_off) {
-            return 0;
+        if (length < 1
+            || alarm_went_off) {
+            return -1;
         }
 
         /* byte by byte search for '\r' */
         while (length > 0) {
 
-            /* todo:
-               here's a bug. if the \r\n\r\n sequence is devided
-               over two chunks of tcp_read data we won't find
-               them... */
-            if (request_buffer[request_buffer_size] == '\r') {
-                if ((length >= 4)
-                    && (request_buffer[request_buffer_size+1] == '\n')
-                    && (request_buffer[request_buffer_size+2] == '\r')
-                    && (request_buffer[request_buffer_size+3] == '\n')) {
-                    header_complete = 1;
-                    break;
+            if (buffer[total_length] == '\r') {
+
+                if (header_complete == 0
+                    || header_complete == 2) {
+                    header_complete++;
+                } else {
+                    header_complete = 0;
                 }
+
+            } else if (buffer[total_length] == '\n') {
+
+                if (header_complete == 1
+                    || header_complete == 3) {
+                    header_complete++;
+                } else {
+                    header_complete = 0;
+                }
+
+            } else {
+
+                header_complete = 0;
+
             }
 
-            request_buffer_size++;
+            if (header_complete == 4) {
+                break;
+            }
+
+            total_length++;
             length--;
 
         }
 
-        request_buffer_size += length;
+        total_length += length;
 
-    } while (!header_complete);
+    } while (header_complete < 4);
 
-    return 1;
+    return total_length;
 
 }
 
 
 /* 1 on success, 0 on failure */
 
-int parse_request(http_method *method, char **url, char **protocol) {
+int parse_request(char *buffer, int buffer_size, http_method *method, char *url, int url_length, char *protocol, int protocol_length) {
 
-    int request_pointer = 0;
     char *method_string;
+    int marker;
+    int pointer = 0;
 
     /* read spaces */
-    while ((request_pointer < request_buffer_size)
-           && (request_buffer[request_pointer] == ' ')) {
-        request_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] == ' ')) {
+        pointer++;
     }
 
     /* start of method */
-    method_string = request_buffer + request_pointer;
+    method_string = buffer + pointer;
 
     /* read method */
-    while ((request_pointer < request_buffer_size)
-           && (request_buffer[request_pointer] != ' ')) {
-        request_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != ' ')) {
+        pointer++;
     }
 
     /* check end of buffer */
-    if (request_pointer >= request_buffer_size) return 0;
+    if (pointer >= buffer_size) return 0;
 
     /* NULL terminate method */
-    request_buffer[request_pointer] = '\0';
-    request_pointer++;
+    buffer[pointer] = '\0';
+    pointer++;
 
     /* read spaces */
-    while ((request_pointer < request_buffer_size)
-           && (request_buffer[request_pointer] == ' ')) {
-        request_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] == ' ')) {
+        pointer++;
     }
 
     /* start of url */
-    *url = request_buffer + request_pointer;
+    marker = pointer;
 
     /* read url */
-    while ((request_pointer < request_buffer_size)
-           && (request_buffer[request_pointer] != ' ')) {
-        request_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != ' ')) {
+        pointer++;
     }
 
     /* check for space */
-    if (request_pointer >= request_buffer_size) return 0;
+    if (pointer >= buffer_size) return 0;
 
-    /* NULL terminate url */
-    request_buffer[request_pointer] = '\0';
-    request_pointer++;
+    /* end of url, NULL terminate it */
+    buffer[pointer] = '\0';
+    pointer++;
+
+    /* copy url */
+    if ((pointer - marker) > url_length) {
+        return 0;
+    }
+    memcpy(url, buffer + marker, (pointer - marker));
 
     /* read spaces */
-    while ((request_pointer < request_buffer_size)
-           && (request_buffer[request_pointer] == ' ')) {
-           request_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] == ' ')) {
+           pointer++;
     }
 
     /* start of protocol */
-    *protocol = request_buffer + request_pointer;
+    marker = pointer;
 
     /* read protocol */
-    while ((request_pointer < request_buffer_size)
-           && (request_buffer[request_pointer] != ' ')
-           && (request_buffer[request_pointer] != '\r')) {
-        request_pointer++;
+    while ((pointer < buffer_size)
+           && (buffer[pointer] != ' ')
+           && (buffer[pointer] != '\r')) {
+        pointer++;
     }
 
     /* read line ending */
-    if (request_buffer[request_pointer] == '\r') {
+    if (buffer[pointer] == '\r') {
         /* \r\n directly following protocol */
-        request_buffer[request_pointer] = '\0';
-        request_pointer++;
-        if (request_buffer[request_pointer] != '\n') return 0;
-    } else  if (request_buffer[request_pointer] == ' ') {
+        buffer[pointer] = '\0';
+        pointer++;
+        if (buffer[pointer] != '\n') return 0;
+    } else  if (buffer[pointer] == ' ') {
         /* spaces following protocol */
-        request_buffer[request_pointer] = '\0';
-        request_pointer++;
-        /* read spaces */
-        while ((request_pointer < request_buffer_size)
-            && (request_buffer[request_pointer] == ' ')) {
-            request_pointer++;
-        }
-        /* read \r\n */
-        if ((request_buffer[request_pointer] != '\r')
-            || (request_buffer[++request_pointer] != '\n')) {
-            return 0;
-        }
+        buffer[pointer] = '\0';
+        pointer++;
     } else {
         /* premature end of request */
         return 0;
     }
+
+    /* copy protocol */
+    if ((pointer - marker) > protocol_length) {
+        return 0;
+    }
+    memcpy(protocol, buffer + marker, (pointer - marker));
 
     /* determine method */
     if (strcmp(method_string, "GET") == 0) {
@@ -495,8 +521,8 @@ int write_response(http_method method, char *url, char *protocol) {
 
 int handle_get(char *url) {
 
-    char *filename;
-    char *mimetype;
+    char filename[MAX_PATH_LENGTH];
+    char mimetype[MIME_TYPE_LENGTH];
 
     FILE *fp;
     struct stat file_stat;
@@ -510,7 +536,9 @@ int handle_get(char *url) {
 
     char byte;
 
-    if (!parse_url(url, &filename, &mimetype)) {
+    if (!parse_url(url,
+                   filename, MAX_PATH_LENGTH,
+                   mimetype, MIME_TYPE_LENGTH)) {
         return write_error(STATUS_BAD_REQUEST);
     }
 
@@ -605,8 +633,10 @@ int handle_get(char *url) {
 
 /* 1 on success, 0 on failure */
 
-int parse_url(char *url, char **filename, char **mimetype) {
+int parse_url(char *url, char *filename, int filename_length, char *mimetype, int mimetype_length) {
 
+    char *mime;
+    char *file;
     char *extension;
     char *u = url;
 
@@ -619,7 +649,7 @@ int parse_url(char *url, char **filename, char **mimetype) {
     if (*u == '/') u++;
 
     /* start of filename */
-    *filename = u;
+    file = u;
     extension = u;
 
     /* filename must not be empty */
@@ -639,28 +669,40 @@ int parse_url(char *url, char **filename, char **mimetype) {
     if (*extension == '.') {
 
         if (strcmp(extension, ".html") == 0) {
-            *mimetype = "text/html";
+            mime = "text/html";
         } else if (strcmp(extension, ".htm") == 0) {
-            *mimetype = "text/html";
+            mime = "text/html";
         } else if (strcmp(extension, ".txt") == 0) {
-            *mimetype = "text/plain";
+            mime = "text/plain";
         } else if (strcmp(extension, ".ps") == 0) {
-            *mimetype = "application/postscript";
+            mime = "application/postscript";
         } else if (strcmp(extension, ".gif") == 0) {
-            *mimetype = "image/gif";
+            mime = "image/gif";
         } else if (strcmp(extension, ".jpg") == 0) {
-            *mimetype = "image/jpeg";
+            mime = "image/jpeg";
         } else if (strcmp(extension, ".jpeg") == 0) {
-            *mimetype = "image/jpeg";
+            mime = "image/jpeg";
         } else {
             /* unknown extension */
-            *mimetype = "application/octet-stream";
+            mime = "application/octet-stream";
         }
 
     } else {
         /* no extension */
-        *mimetype = "application/octet-stream";
+        mime = "application/octet-stream";
     }
+
+    /* copy mimetype */
+    if (strlen(mime) >= mimetype_length) {
+        return 0;
+    }
+    memcpy(mimetype, mime, strlen(mime) + 1);
+
+    /* copy filename */
+    if (strlen(file) >= filename_length) {
+        return 0;
+    }
+    memcpy(filename, file, strlen(file) + 1);
 
     return 1;
 
