@@ -24,7 +24,7 @@
 #define LISTEN_PORT 80
 #define TIME_OUT 5
 #define MAX_REQUEST_LENGTH 512
-#define MAX_RESPONSE_LENGTH 1024
+#define MAX_RESPONSE_LENGTH 6225
 #define PROTOCOL "HTTP/1.0"
 
 typedef enum {
@@ -35,7 +35,7 @@ typedef enum {
 
 typedef enum {
     STATUS_OK, STATUS_HTTP_VERSION_NOT_SUPPORTED,
-    STATUS_NOT_IMPLEMENTED
+    STATUS_NOT_IMPLEMENTED, STATUS_PAYMENT_REQUIRED
 } http_status;
 
 typedef enum {
@@ -280,20 +280,22 @@ int handle_get(char *buffer, char *url) {
     FILE *fp;
     int byte;
 
-    int length = 0;;
+    int length;
 
     if (!parse_url(url, &filename, &mimetype)) {
         /* bad request */
+        length = 0;
         return length;
     }
 
     /* we should also check file permissions here! */
     if ((fp = fopen(filename, "r")) == (FILE *)0) {
         /* bad request (could not open file) */
+        length = 0;
         return length;
     }
 
-    length += write_status(buffer, STATUS_OK);
+    length = write_status(buffer, STATUS_OK);
 
     length += write_header(buffer + length, HEADER_CONTENT_TYPE, mimetype);
     length += write_header(buffer + length, HEADER_ISLAND, "Goeree Overflakkee");
@@ -308,6 +310,12 @@ int handle_get(char *buffer, char *url) {
         && (length < MAX_RESPONSE_LENGTH)
         ) {
         length += sprintf(buffer + length, "%c", byte);
+    }
+
+    /* check if we read entire file */
+    if (byte != EOF) {
+        /* should we try harder here and send data in several chunks? */
+        length = write_status(buffer, STATUS_PAYMENT_REQUIRED);
     }
 
     return length;
@@ -412,6 +420,10 @@ int write_status(char *buffer, http_status status) {
         case STATUS_NOT_IMPLEMENTED:
             status_string = "Not implemented";
             status_code = 501;
+            break;
+        case STATUS_PAYMENT_REQUIRED:
+            status_string = "Payment required for files this big.";
+            status_code = 402;
             break;
         default:
             return 0;
