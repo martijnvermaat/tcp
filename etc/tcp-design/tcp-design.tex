@@ -186,12 +186,23 @@ When there is no active connection, \lstinline|tcp_read| fails.
 
 \paragraph{Closing connections}
 
-Closing a connection in TCP has a special meaning. It does not just mean you
-will stop communicating, but 
+Closing a connection in TCP has a meaning. It does not just mean you
+will stop communicating, but that you will not write any more data. The other
+side will eventualy read the end of the data stream after you closed the
+connection. For some applications, it might be important whether or not you
+call \lstinline|tcp_close| after writing some data failed, because the other
+side might think everything went fine after finding the end of the data
+stream. However, this depends on the application level protocol.
 
 \paragraph{Signals}
 
-
+To let applications be able to interrupt blocking calls to
+\lstinline|tcp_listen| and \lstinline|tcp_read|, these functions replace the
+signal handler of the application by the TCP signal handler. When the alarm
+goes off, the TCP signal handler is called by the operating system, the
+application's signal handler is called by the TCP library and the blocking
+call returns. In case of \lstinline|tcp_read|, the bytes that were already
+received are delivered to the application.
 
 
 \section{Design decisions}
@@ -344,4 +355,3 @@ after resending a packet 10 times, the other party is considered to be retired.
 
 
 \end{document}
-
