@@ -337,7 +337,6 @@ TCP itself, for example incoming packets or timers that go
 off. \lstinline|partner_dead| means that after resending a packet 10 times,
 the other party is considered to be retired.
 
-
 \begin{figure}
 \begin{center}
 \includegraphics{handshake.png}
@@ -345,6 +344,16 @@ the other party is considered to be retired.
 \caption{Three way Handshake}
 \label{figuur:handshake}
 \end{figure}
+
+\paragraph{}
+This diagram explains through which states TCP goed when an established
+connection is brought down. Again, the capital labels refer to application
+calls, and the other labels (at the left side of the slash) denote general TCP
+events. The right side of the label indicates the activity that is undertaken
+when this state transition is made. As can be seen in the second diagram, the
+state TIME_WAIT is ommited, because TCP does not have to wait for packets to
+die off. After the last fin is acked in FIN_WAIT_2, the state goed directly to
+CLOSED.
 
 \begin{figure}
 \begin{center}
