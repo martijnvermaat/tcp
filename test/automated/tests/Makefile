@@ -29,7 +29,7 @@ all: 01_compile.o 03_rd_bf_soc.o 04_wr_bf_soc.o 10_handshake.o 15_basic.o 18_wr_
 	$(CC) $(CFLAGS) -o ../build/15_basic 15_basic.o $(LDFLAGS)
 	$(CC) $(CFLAGS) -o ../build/18_wr_1_byte 18_wr_1_byte.o $(LDFLAGS)
 
-#	rm -f *.o
+	rm -f *.o
 
 clean:
 	rm -f *.o a.out *.bak core errs
