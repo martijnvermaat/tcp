@@ -1,0 +1,50 @@
+README file for automated tests
+
+
+
+OVERVIEW
+
+
+The automated test suite contains the following:
+
+* The tests as .c files in the tests/ directory
+* A Makefile in the tests/ directory which compiles all tests; the results
+  are placed in the build/ directory
+* A shell script (linux_all) that compiles and runs the tests
+* The file 'output' containing the results of the shell script
+
+
+All test files produce no relevant output on stdout. However, libraries used
+by the tests may do so (notably out own tcp lib with printf statements).
+All relevent output by the tests is written to stderr, so it can be easily
+captured.
+
+If a test finishes successfully, no output is written to stderr and an exit
+value of 0 is returned.
+If a test finishes unsuccessfully, relevant messages are written to stderr
+and an exit value of 1 is returned.
+
+
+The shell script runs executes the Makefile in the tests/ directory. After
+that, all compiled tests are in the build/ directory. Now it executes all
+files in that directory, capturing its output on stderr. Together with some
+info on the name of the test and date/time, this output is written to the
+'output' file.
+
+To be sure no floating ethernet packets from the previous test will influence
+the next test, the shell script sleeps for 0.2 seconds between every test.
+
+
+
+ADDING A TEST
+
+To add a test, create the .c file for it in the tests/ directory and include
+the compiling directives for it in the Makefile. That's all.
+
+
+
+RUNNING THE TESTS
+
+Just run the shell script 'linux_all'. It prints the results, which are also
+stored in the 'output' file. If you don't see any meaningful messages printed,
+there's a good chance all tests have passed.
