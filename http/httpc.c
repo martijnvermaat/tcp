@@ -20,8 +20,8 @@
 
 #define SERVER_PORT 80
 #define TIME_OUT 10
-#define REQUEST_BUFFER_SIZE 512
-#define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
+#define REQUEST_BUFFER_SIZE 512 /* request should fit */
+#define RESPONSE_BUFFER_SIZE 9024 /* response header should always fit */
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpc.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
@@ -242,6 +242,8 @@ int handle_response(char *ip, char *filename) {
     }
 
     do {
+
+        printf("buffer contains %d bytes!!!!\n", response_length);
 
         /* write buffer contents to file */
         while (response_pointer < response_length) {
@@ -544,6 +546,8 @@ int add_to_buffer(void) {
 
     int length = 0;
 
+    printf("add to buffer (ask %d bytes)\n", RESPONSE_BUFFER_SIZE - response_length);
+
     if (response_length >= RESPONSE_BUFFER_SIZE) {
         return 1;
     }
@@ -553,6 +557,8 @@ int add_to_buffer(void) {
     length = tcp_read(response_buffer + response_length,
                       RESPONSE_BUFFER_SIZE - response_length);
     alarm(0);
+
+    printf("stored %d bytes\n", length);
 
     if ((length < 0) || alarm_went_off) {
         return 0;

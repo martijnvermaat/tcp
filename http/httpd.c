@@ -36,10 +36,8 @@
 #define LISTEN_PORT 80
 #define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
 #define TIME_OUT 5
-#define REQUEST_BUFFER_SIZE 512
-#define RESPONSE_BUFFER_SIZE 1024 /* 'minimum number of bytes we like to send in one go' */
-#define FILE_BUFFER_SIZE 80000 /* number of bytes to read at a time from a file, should
-                                  be at least the size of RESPONSE_BUFFER_SIZE */
+#define REQUEST_BUFFER_SIZE 512 /* request header should fit */
+#define RESPONSE_BUFFER_SIZE 80000
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpd.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
@@ -371,8 +369,6 @@ int handle_get(char *url) {
     char lastmodified[LASTMODIFIED_LENGTH];
     time_t curtime;
 
-    char file_buffer[FILE_BUFFER_SIZE];
-    int bytes_read;
     char byte;
 
     if (!parse_url(url, &filename, &mimetype)) {
@@ -423,22 +419,9 @@ int handle_get(char *url) {
 
     /* read file contents */
     do {
-
-        bytes_read = 0;
-
-        while (bytes_read < FILE_BUFFER_SIZE) {
-            byte = getc(fp);
-            if (feof(fp)) break;
-            file_buffer[bytes_read] = byte;
-            bytes_read++;
-        }
-
-        if (!write_data(file_buffer, bytes_read)) {
-            fclose(fp);
-            return 0;
-        }
-
-    } while (bytes_read == FILE_BUFFER_SIZE);
+        byte = getc(fp);
+        if (feof(fp)) break;
+    } while (write_data(&byte, 1));
 
     /* error occured during reading of file */
     if (ferror(fp)) {
@@ -560,6 +543,8 @@ int write_error(http_status status) {
 
 int write_status(http_status status) {
 
+#define STATUS_LINE_LENGTH 40
+    char status_line[STATUS_LINE_LENGTH];
     char *status_string;
     int status_code;
     int written;
@@ -598,28 +583,14 @@ int write_status(http_status status) {
             status_code = 501;
     }
 
-    /*
-      if it doesn't fit in the buffer, just return failure.
-      the entire header should always fit in the buffer
-      anyway, so it isn't worth the hassle to send the buffer
-      contents first.
-      to change this behaviour, just update this procedure
-      like write_data.
-    */
+    /* format status line */
+    written = snprintf(status_line, STATUS_LINE_LENGTH, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
 
-    written = snprintf(response_buffer + response_buffer_size,
-                       RESPONSE_BUFFER_SIZE - response_buffer_size,
-                       "%s %d %s\r\n", PROTOCOL, status_code, status_string);
-
-    if ((written < 0)
-        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size))) {
-        response_buffer_size += written;
-        return 0;
+    if (written >= STATUS_LINE_LENGTH) {
+        written = STATUS_LINE_LENGTH -1;
     }
 
-    response_buffer_size += written;
-
-    return 1;
+    return write_data(status_line, written);
 
 }
 
@@ -640,6 +611,8 @@ int write_general_headers(void) {
 
 int write_header(http_header header, char *value) {
 
+#define HEADER_LINE_LENGTH 60
+    char header_line[HEADER_LINE_LENGTH];
     char *header_string;
     int written;
 
@@ -663,29 +636,14 @@ int write_header(http_header header, char *value) {
             return 1;
     }
 
-    /*
-      if it doesn't fit in the buffer, just return failure.
-      the entire header should always fit in the buffer
-      anyway, so it isn't worth the hassle to send the buffer
-      contents first.
-      to change this behaviour, just update this procedure
-      like write_data.
-    */
+    /* format status line */
+    written = snprintf(header_line, HEADER_LINE_LENGTH, "%s: %s\r\n", header_string, value);
 
-    written = snprintf(response_buffer + response_buffer_size,
-                       RESPONSE_BUFFER_SIZE - response_buffer_size,
-                       "%s: %s\r\n", header_string, value);
-
-    printf("written: %d\n", written);
-
-    if ((written < 0)
-        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size))) {
-        return 0;
+    if (written >= HEADER_LINE_LENGTH) {
+        written = HEADER_LINE_LENGTH -1;
     }
 
-    response_buffer_size += written;
-
-    return 1;
+    return write_data(header_line, written);
 
 }
 
@@ -742,8 +700,11 @@ int send_buffer() {
     int sent = 0;
     int total_sent = 0;
 
+    printf("sending buffer: %d bytes\n", response_buffer_size);
+
     do {
         sent = tcp_write(response_buffer + total_sent, response_buffer_size - total_sent);
+        printf(" wrote %d of buffer\n", sent);
         total_sent += sent;
     } while ((sent > 0) && total_sent < response_buffer_size);
 

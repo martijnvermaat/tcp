@@ -5,7 +5,7 @@ export ETH=2
 export IP1=192.168.0.1  # client IP
 export IP2=192.168.0.2  # server IP
 
-export PACKET_LOSS=30
+export PACKET_LOSS=0
 export LOG_PACKETS=1
 
 ./httpd $*

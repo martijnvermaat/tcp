@@ -294,6 +294,35 @@ int tcp_read(char *buf, int maxlen) {
     //unsigned oldtimo;
 
 
+    /*
+      Okay, this function needs some more thought.
+      As it is now, it can never return more than BUFFER_SIZE
+      at one call.
+
+      What are the semantics of tcp_read? Two possibilities:
+
+      1) If the end of a stream is never reached until it returns
+         0, than the current behaviour is not really a problem
+         (although we must check if it really returns 0 on the
+         end of a stream).
+         Also, in this case we need to revise http.
+
+      2) If the end of a stream is reached when it returns less
+         bytes than asked for, the current behaviour is plain
+         wrong. Because it returns less than BUFFER_SIZE per
+         definition, regardless what is asked for.
+         This are the semantics http assumes (and it has some
+         difficulty with it, see comments in httpc.c).
+    */
+
+    /*
+      Apart from the above, there seems to be a bug in the
+      current implementation that causes tcp_read never to
+      return more bytes than one ip packet can carry. This is
+      especially dangereous if we stuck to the semantics as
+      described in 2) above.
+    */
+
     if (tcb.state != S_ESTABLISHED
         && tcb.state != S_FIN_WAIT_1
         && tcb.state != S_FIN_WAIT_2) {
