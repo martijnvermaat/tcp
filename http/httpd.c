@@ -24,7 +24,7 @@
   Also for 'chars' and 'bytes'. (Be consistent.)
 */
 #define LISTEN_PORT 80
-#define UNPRIVILIGED_UID 1000
+#define UNPRIVILIGED_UID 9999 /* =nobody on minix, on linux 1000 is first normal user */
 #define TIME_OUT 5
 #define MAX_REQUEST_LENGTH 512
 #define MAX_RESPONSE_LENGTH 6225
@@ -38,7 +38,9 @@ typedef enum {
 
 typedef enum {
     STATUS_OK, STATUS_HTTP_VERSION_NOT_SUPPORTED,
-    STATUS_NOT_IMPLEMENTED, STATUS_PAYMENT_REQUIRED
+    STATUS_NOT_IMPLEMENTED, STATUS_PAYMENT_REQUIRED,
+    STATUS_BAD_REQUEST, STATUS_NOT_FOUND, STATUS_FORBIDDEN,
+    STATUS_INTERNAL_SERVER_ERROR
 } http_status;
 
 typedef enum {
@@ -56,6 +58,8 @@ void send_response(char *buffer);
 int handle_get(char *buffer, char *url);
 int file_name_character(char *c);
 int write_status(char *buffer, http_status status);
+int write_error(char *buffer, http_status status);
+int write_standard_headers(char *buffer);
 int write_header(char *buffer, http_header header, char *value);
 int write_body(char *buffer);
 
@@ -179,9 +183,7 @@ int serve(void) {
     if (parse_request(request_buffer, &method, &url, &protocol)) {
         write_response(response_buffer, method, url, protocol);
     } else {
-        /* 400 bad request (i think) */
-        printf("400 bad request!!!\n");
-        /* send_standard_headers() */
+        write_error(response_buffer, STATUS_BAD_REQUEST);
     }
 
     send_response(response_buffer);
@@ -273,6 +275,8 @@ int parse_request(char *request, http_method *method, char **url, char **protoco
         *method = METHOD_GET;
     } else if (strcmp(method_string, "POST") == 0) {
         *method = METHOD_POST;
+    } else if (strcmp(method_string, "HEAD") == 0) {
+        *method = METHOD_HEAD;
     } else {
         *method = METHOD_UNKNOWN;
     }
@@ -290,7 +294,7 @@ void write_response(char *buffer, http_method method, char *url, char *protocol)
 
     /* check for HTTP 1.0 protocol */
     if (strcmp(protocol, "HTTP/1.0") != 0) {
-        length += write_status(buffer, STATUS_HTTP_VERSION_NOT_SUPPORTED);
+        length += write_error(buffer, STATUS_HTTP_VERSION_NOT_SUPPORTED);
         buffer[length] = '\0';
         return;
     }
@@ -302,7 +306,7 @@ void write_response(char *buffer, http_method method, char *url, char *protocol)
             break;
         default:
             /* unsupported method */
-            length += write_status(buffer, STATUS_NOT_IMPLEMENTED);
+            length += write_error(buffer, STATUS_NOT_IMPLEMENTED);
     }
 
     buffer[length] = '\0';
@@ -325,33 +329,28 @@ int handle_get(char *buffer, char *url) {
     int length;
 
     if (!parse_url(url, &filename, &mimetype)) {
-        /* bad request */
-        length = 0;
-        return length;
+        return write_error(buffer, STATUS_BAD_REQUEST);
     }
 
-    /* we should also check file permissions here! */
+    /* open file */
     if ((fp = fopen(filename, "r")) == (FILE *)0) {
-        /* bad request (could not open file) */
+        /* could not open file */
         switch (errno) {
             case ENOENT:
-                printf("File does not exist.\n");
+                length = write_error(buffer, STATUS_NOT_FOUND);
                 break;
             case EACCES:
-                printf("Permission denied.\n");
+                length = write_error(buffer, STATUS_FORBIDDEN);
                 break;
             default:
-                printf("Could not open file (reason unknown).\n");
+                length = write_error(buffer, STATUS_INTERNAL_SERVER_ERROR);
         }
-        length = 0;
         return length;
     }
 
     length = write_status(buffer, STATUS_OK);
-
     length += write_header(buffer + length, HEADER_CONTENT_TYPE, mimetype);
-    length += write_header(buffer + length, HEADER_ISLAND, "Goeree Overflakkee");
-    length += write_header(buffer + length, HEADER_SERVER, "Tiny httpd.c / 0.1 (maybe on Minix)");
+    length += write_standard_headers(buffer + length);
 
     /* blank line between headers and body */
     length += sprintf(buffer + length, "\r\n");
@@ -367,7 +366,7 @@ int handle_get(char *buffer, char *url) {
     /* check if we read entire file */
     if (byte != EOF) {
         /* should we try harder here and send data in several chunks? */
-        length = write_status(buffer, STATUS_PAYMENT_REQUIRED);
+        length = write_error(buffer, STATUS_PAYMENT_REQUIRED);
     }
 
     return length;
@@ -413,14 +412,26 @@ int parse_url(char *url, char **filename, char **mimetype) {
 
         if (strcmp(extension, ".html") == 0) {
             *mimetype = "text/html";
+        } else if (strcmp(extension, ".htm") == 0) {
+            *mimetype = "text/html";
+        } else if (strcmp(extension, ".txt") == 0) {
+            *mimetype = "text/plain";
+        } else if (strcmp(extension, ".ps") == 0) {
+            *mimetype = "application/postscript";
+        } else if (strcmp(extension, ".gif") == 0) {
+            *mimetype = "image/gif";
         } else if (strcmp(extension, ".jpg") == 0) {
             *mimetype = "image/jpeg";
+        } else if (strcmp(extension, ".jpeg") == 0) {
+            *mimetype = "image/jpeg";
         } else {
-            *mimetype = "text/plain";
+            /* unknown extension */
+            *mimetype = "application/octet-stream";
         }
 
     } else {
-        *mimetype = "text/plain";
+        /* no extension */
+        *mimetype = "application/octet-stream";
     }
 
     return 1;
@@ -443,12 +454,28 @@ void send_response(char *buffer) {
 
     /* maybe we shouldn't make this buffer NULL terminating... */
     int length = strlen(buffer);
-    int bytes_sent = 0;
-    int tries = 0;
+    int sent = 0;
+    int total_sent = 0;
 
-    while (tries++ < 10 && bytes_sent < length) {
-        tcp_write(buffer + bytes_sent, length - bytes_sent);
-    }
+    do {
+        sent = tcp_write(buffer + total_sent, length - total_sent);
+        total_sent += sent;
+    while (sent && total_sent < length) {
+
+}
+
+
+/* number of bytes written */
+
+int write_error(char *buffer, http_status status) {
+
+    int length;
+
+    length = write_status(buffer, status);
+    length += write_header(buffer + length, HEADER_CONTENT_TYPE, "text/plain");
+    length += write_standard_headers(buffer + length, status);
+
+    return length;
 
 }
 
@@ -465,23 +492,53 @@ int write_status(char *buffer, http_status status) {
             status_string = "OK";
             status_code = 200;
             break;
+        case STATUS_BAD_REQUEST:
+            status_string = "Bad Request";
+            status_code = 400;
+            break;
+        case STATUS_PAYMENT_REQUIRED:
+            status_string = "Payment required for files this big";
+            status_code = 402;
+            break;
+        case STATUS_FORBIDDEN:
+            status_string = "Forbidden";
+            status_code = 403;
+            break;
+        case STATUS_NOT_FOUND:
+            status_string = "Not Found";
+            status_code = 404;
+            break;
+        case STATUS_INTERNAL_SERVER_ERROR:
+            status_string = "Internal Server Error";
+            status_code = 500;
+            break;
         case STATUS_HTTP_VERSION_NOT_SUPPORTED:
-            status_string = "HTTP version not supported";
+            status_string = "HTTP Version Not Supported";
             status_code = 505;
             break;
         case STATUS_NOT_IMPLEMENTED:
-            status_string = "Not implemented";
+            status_string = "Not Implemented";
             status_code = 501;
-            break;
-        case STATUS_PAYMENT_REQUIRED:
-            status_string = "Payment required for files this big.";
-            status_code = 402;
             break;
         default:
             return 0;
     }
 
     return sprintf(buffer, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
+
+}
+
+
+/* number of bytes written */
+
+int write_standard_headers(char *buffer) {
+
+    int length;
+
+    length = write_header(buffer, HEADER_ISLAND, "Goeree Overflakkee");
+    length += write_header(buffer + length, HEADER_SERVER, "Tiny httpd.c / 0.1 (maybe on Minix)");
+
+    return length;
 
 }
 
