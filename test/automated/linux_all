@@ -5,10 +5,21 @@ export ETH=1
 export IP1=192.168.0.1  # client IP
 export IP2=192.168.0.2  # server IP
 
-OUTPUT=test_output
+OUTPUT=output
 
 
-echo "Starting automated tests" > $OUTPUT
+echo "Compiling tests" > $OUTPUT
+echo `date` >> $OUTPUT
+echo >> $OUTPUT
+
+cd tests
+make clean > /dev/null 2>> ../$OUTPUT
+make all > /dev/null 2>> ../$OUTPUT
+cd ..
+
+echo >> $OUTPUT
+
+echo "Starting automated tests" >> $OUTPUT
 echo `date` >> $OUTPUT
 echo >> $OUTPUT
 

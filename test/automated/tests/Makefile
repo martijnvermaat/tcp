@@ -13,14 +13,15 @@
 AR = aal
 RANLIB = touch
 
-CFLAGS  = -DDEBUG -Wall -I/usr/local/include/cn -I../../tcp -I../../ip -O0
-LDFLAGS = -L../../ip -L../../tcp -L/usr/local/lib -ltcp -lip -lcn
+CFLAGS  = -DDEBUG -Wall -I/usr/local/include/cn -I../../../tcp -I../../../ip -O0
+LDFLAGS = -L../../../ip -L../../../tcp -L/usr/local/lib -ltcp -lip -lcn
 
 all: compile.o handshake.o basic.o
-	$(CC) $(CFLAGS) -o build/compile compile.o $(LDFLAGS)
-	$(CC) $(CFLAGS) -o build/handshake handshake.o $(LDFLAGS)
-	$(CC) $(CFLAGS) -o build/basic basic.o $(LDFLAGS)
+	$(CC) $(CFLAGS) -o ../build/compile compile.o $(LDFLAGS)
+	$(CC) $(CFLAGS) -o ../build/handshake handshake.o $(LDFLAGS)
+	$(CC) $(CFLAGS) -o ../build/basic basic.o $(LDFLAGS)
+	rm -f *.o
 
 clean:
 	rm -f *.o a.out *.bak core errs
-	rm -f build/*
+	rm -f ../build/*
