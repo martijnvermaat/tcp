@@ -34,7 +34,7 @@
 
 
 The most important high-level design decision is that we choose to do a
-three-tier implemenation. The three tiers in our TCP implementation are
+three-tier implementation. The three tiers in our TCP implementation are
 the connection-ori\"ented tier, the state tier, and the connection-less
 tier.
 
@@ -49,8 +49,8 @@ connection-ori\"ented environment, and therefore has to maintain a state.
 \paragraph{}
 
 Calling of procedures happens only within one tier, or from one tier to
-the tier directly beneeth it. This idea can be better understood by
-looking at the high-level design diagram attached.
+the tier directly beneeth it. This programming paradigm is illustrated by the 
+attached high-level design diagram.
 
 
 \section{Low-level design}
@@ -215,12 +215,60 @@ int tcp_socket() {
 As we did in the previous section for the connection-ori\"ented tier, we
 will describe most procedures of the state tier in this section, again by
 using pseudo-code.
-Additionally, we will describe the \verb|tcb| (TCP Control Block),
-which contains the current state. Also, some methods to access information
-on the current state from a higher tier will be described.
+First, we will give an overview of the most important decisions that we made.
+
+\subsubsection{Design decisions}
 
 
-\subsubsection{Procedures}
+\paragraph{Buffer for incoming data}
+    The buffer for incoming data is bigger than the maximum payload of a tcp
+    packet. This is necessary because new data might come in while for example 
+    \verb|tcp\_write()| is polling for ack's. These data must be stored in the 
+    buffer; 
+    there is no way we can deliver it to the user.
+    The buffer is circular because this prevents shoving of data to the begin of 
+    the buffer to fill the gaps. 
+    The state of the buffer is comprised in a variable that points to the 
+    current start of the buffer, a variable that indicates the amount of data in 
+    the buffer and of course the buffer itself.    
+
+\paragraph{Pushing of incoming data}
+    We don't assume that every incoming packet has the PSH flag set, eventhough 
+    the assignment prescribes to set PSH on all outbound packets. That we do
+    check the PHS flag means 
+    that if it is set, \verb|tcp\_read()| delivers is the data immediately.
+    Only if there is no data to be pushed, \verb|tcp\_read()| keeps on polling 
+    ip for 
+    more data until the amount of data specified by the user is received.
+    
+    \verb|tcp\_read()| might return less (if the \verb|PSH| flag is set), but 
+    the \verb|PSH| flag 
+    will never cause \verb|tcp\_read()| to return more 
+    data than indicated by the users parameter.
+    
+    To keep track of the number of bytes that need to be pushed, a variable is 
+    added to the tcb: \verb|rcvd\_data\_push|.
+
+\paragraph{Acknowledgements}
+    If data comes in tcp has never seen before (i.e. fresh data), an 
+    acknowledgement is send
+    immediately by \verb|handle\_data()|. In real tcp implementations sending of
+     ack's 
+    should be postponed until the data is actually delivered to the user, 
+    but since the assignment prescribes to use a window of size 1, we have to 
+    acknowledge each packet instantly.
+
+\paragraph{Connection establishment}
+    After the first \verb|syn| is sent, the state transits to \verb|SYN\_SENT| 
+    and we wait for the \verb|syn+ack| response. In this state, only 
+    \verb|syn+ack| packets will be accepted. If a packet arrives that carries an
+    acknowledgement, but no \verb|syn|,...
+    Als er een packet binnenkomt met een ack, maar zonder syn, dan
+    negeren we dit packet. De SYN, waar we  op wachten, moet toch de
+    verplichte ACK bevatten. Als het syn+ack packet niet binnen 1 seconde
+    arriveert, dan gaat de state naar CLOSED, daarna wordt de syn opnieuw
+    verstuurt. De state gaat dan weer terug naar SYN_SENT.
+\subsubsection{State-tier Pseudocode}
 
 
 \paragraph{}
@@ -417,6 +465,7 @@ int send_data(char *buf, int len) {
 \paragraph{}
 
 
+
 \begin{lstlisting}[title=Procedure send\_syn]
 /*
   Returns 0 on success, -1 otherwise.
@@ -486,71 +535,43 @@ data, packet sequence number, etcetera.
 
 
 \begin{lstlisting}[title=The TCP Control Block structure]
-typedef struct tcb_s {
-    /* ... */
+/* TCP control block */
+typedef struct tcb {
+    ipaddr_t our_ipaddr;
+    ipaddr_t their_ipaddr;
+    tcp_u16t our_port;
+    tcp_u16t their_port;
+    tcp_u32t our_seq_nr;
+    tcp_u32t their_seq_nr;  /* last byte we acked */
+    tcp_u32t ack_nr;        /* the seq nr to ack in next packet */
+    tcp_u32t expected_ack;  
+    char rcv_data[BUFFER_SIZE];
+    int rcvd_data_start;    /* pointer to start of circular buffer */
+    int rcvd_data_size;     /* nr of bytes in buffer */
+    int rcvd_data_psh;      /* number of bytes to push, (from start of buffer)*/
+    char *unacked_data;     /* transmitted data yet to be acked (or resent) */
+    int unacked_data_len;   /* length of transmitted data yet to be acked */
+    state_t state;          /* stores the current state of the connection */
 }
+
 \end{lstlisting}
 
 
 \paragraph{}
-
-
-\begin{lstlisting}[title=Procedure buffer\_empty]
-/*
-  Returns whether or not the buffer is empty.
-*/
-
-int buffer_empty() {
-
-    return tcb.bytes_in_buffer == 0;
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure get\_state]
-/*
-  Returns current state.
-*/
-
-state_t get_state() {
-
-    return tcb.state;
-
-}
-\end{lstlisting}
-
-
-\paragraph{}
-
-
-\begin{lstlisting}[title=Procedure set\_state]
-/*
-  state     State to set state to
-
-  Returns 0 on success, -1 on failure.
-*/
-
-int set_state(state_t state) {
-
-    tcb.state = state;
-
-}
-\end{lstlisting}
 
 
 \subsection{Connection-less tier}
 
+The only two procedures in this tier are \verb|send_tcp_packet()| and
+\verb|recv_tcp_packet()|.
 
-We will not write pseudo-code for the two procedures in this tier, because
-we think their structure is not interresting enough. They simply send or
-recieve a TCP packet.
+\paragraph{Procedure recv\_tcp\_packet()}
+This procedure calls \verb|ip\_receive()| only once. If a packet is corrupted,
+or if it is no tcp packet at all, \verb|recv\_tcp\_packet| returns -1.
+That it does not loop to wait for a valid packet, is because this might take 
+forever. The looping is taken care of by \verb|tcp\_read()|, which checks if the alarm 
+went of on every cycle.
 
-The only two procedures in this tier are \verb|send_tcp_packet| and
-\verb|recv_tcp_packet|.
 
 
 \end{document}

@@ -49,7 +49,7 @@ void tcp_alarm(int sig);
 int min(int x, int y);
 int max(int x, int y);
 void print_bits(char c);
-
+    
 
 /* TCP control block */
 typedef struct tcb {
@@ -59,15 +59,17 @@ typedef struct tcb {
     tcp_u16t their_port;
     tcp_u32t our_seq_nr;
     tcp_u32t their_seq_nr;  /* last byte we acked */
-    tcp_u32t ack_nr;
-    tcp_u32t expected_ack;
-    char rcv_data[BUFFER_SIZE+1];  /* todo: why +1 ? */
-    int rcvd_data_start;
-    int rcvd_data_size;
-    int rcvd_data_psh;   /* number of bytes to push, always aligned to start of buffer */
-    char *unacked_data;
-    int unacked_data_len;
-    state_t state;
+    tcp_u32t ack_nr;        /* the seq nr to ack in next packet */
+    tcp_u32t expected_ack;  
+    char rcv_data[BUFFER_SIZE];
+    int rcvd_data_start;    /* pointer to start of circular buffer */
+    int rcvd_data_size;     /* nr of bytes in buffer */
+    int rcvd_data_psh;      /* number of bytes to push, (from start of buffer)*/
+    char *unacked_data;     /* transmitted data yet to be acked (or resent) */
+    int unacked_data_len;   /* length of transmitted data yet to be acked */
+    state_t state;          /* stores the current state of the connection */
+    tcp_u32t their_previous_seq_nr; /* to detect duplicate packets */
+    tcp_u8t their_previous_flags;   /* to detect duplicate packets */
 } tcb_t;
 
 /* Pseudo header */
@@ -116,7 +118,8 @@ static tcb_t tcb = {
     0,       /* rcvd_data_psh     */
     "",      /* unacked_data      */
     0,       /* unacked_data_len  */
-    S_START  /* state             */
+    S_START, /* state             */
+    0,       /* their_previous_seq_nr */
 };
 
 static int alarm_went_of = 0;   /* <- in tcb? */
@@ -345,9 +348,6 @@ int tcp_read(char *buf, int maxlen) {
     tcb.rcvd_data_size -= delivered_bytes;
     tcb.rcvd_data_psh = max(tcb.rcvd_data_psh - delivered_bytes, 0);
     tcb.rcvd_data_start = (tcb.rcvd_data_start + delivered_bytes) % BUFFER_SIZE;
-    
-    printf("\ntcp_read: read %d bytes: %s\n", delivered_bytes, buf);
-    printf("tcb.received_data_psh to: %d\n", tcb.rcvd_data_psh);
 
     return delivered_bytes;
 
@@ -408,12 +408,15 @@ int do_packet(void) {
     rcvd = recv_tcp_packet(&their_ip, &src_port, &dst_port, 
                         &seq_nr, &ack_nr, &flags, &win_sz, data, &data_sz);
     if (rcvd != -1 && dst_port == tcb.our_port && src_port == tcb.their_port){
-        /*fprintf(stderr,"\n%s tcp packet received...\n",inet_ntoa(my_ipaddr)); 
-        fflush(stderr);*/
+    
         handle_ack(flags, ack_nr);
         handle_data(flags, seq_nr, data, data_sz);
         handle_syn(flags, seq_nr, their_ip);
         handle_fin(flags, seq_nr);
+        
+        /* we store this to detect duplicate packets later on */
+        tcb.their_previous_seq_nr = seq_nr;
+        tcb.their_previous_flags = flags;
     }
     
     return rcvd;
@@ -540,7 +543,10 @@ void handle_data(tcp_u8t flags, tcp_u32t seq_nr, char *data, int data_size) {
 
         } else {
             /* no fresh data, but we need to ack in case the last ack was lost*/
-            ack_these_bytes(0);
+            if (tcb.their_previous_seq_nr == seq_nr) {
+            /* we got a duplicate on our hands; send ack again*/
+                ack_these_bytes(0);
+            }
         }
     }
     
@@ -560,14 +566,13 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
 
     if (get_state() == S_LISTEN) {
         tcb.their_ipaddr = their_ip;
-        printf(" from %s\n",inet_ntoa(their_ip));
-        fflush(stdout);
+        /*printf(" from %s\n",inet_ntoa(their_ip));
+        fflush(stdout);*/
         tcb.their_seq_nr = seq_nr + 1;
         tcb.ack_nr = seq_nr + 1;
     
         declare_event(E_SYN_RECEIVED);
-        
-        /* send_syn will be called in tcp_listen */
+        /* send_syn will be called by tcp_listen */
 
 
     } else if (get_state() == S_SYN_SENT) {
@@ -579,6 +584,14 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
             /* todo: received sequence number may be invalid */
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
+            send_ack();
+        }
+        
+    } else if (get_state() == S_ESTABLISHED) {
+        
+        if ( (tcb.their_previous_seq_nr == seq_nr) &&
+             (tcb.their_previous_flags & SYN_FLAG) ) {
+            /* we got a duplicate on our hands; send ack again */
             send_ack();
         }
         
@@ -600,8 +613,15 @@ void handle_fin(tcp_u8t flags, tcp_u32t seq_nr) {
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
             send_ack();
+        } else if (s == S_CLOSE_WAIT || s == S_LAST_ACK) {
+            /* we already received a fin; let's see if it's a duplicate */
+            if ( (tcb.their_previous_seq_nr == seq_nr) &&
+                 (tcb.their_previous_flags & FIN_FLAG) ) {
+                 /* yes, it's a duplicate; ack it again */
+                 send_ack();
+            }
         }
-    }
+    }   
 }
 
 
@@ -625,18 +645,6 @@ int send_data(const char *buf, int len) {
     while (retransmission_allowed--) {
         bytes_sent = send_tcp_packet(tcb.their_ipaddr, tcb.our_port, 
             tcb.their_port, tcb.our_seq_nr, tcb.ack_nr, flags, 1, buf, len);
-        
-        /* todo: misschien moeten we dit er maar uit laten.
-
-          Redenen voor send_tcp_packet om -1 terug te geven:
-          * ip_init failed (kon eigen ip adres niet vaststellen)
-          * doel is op ander netwerk en er is geen gateway gevonden
-          * ethernet adres van doel kon niet vastgesteld worden
-          * eth_send failed
-
-          Dus eigenlijk kan het er wel in blijven, want de kans is niet
-          groot dat het de volgende loop iteratie wel lukt...
-        */
 
         if(bytes_sent == -1){
             fprintf(stderr,"no bytes sent");
@@ -799,7 +807,7 @@ void ack_these_bytes(int bytes_delivered) {
 void clear_tcb(void) {
     tcb.state = S_CLOSED;
     tcb.our_ipaddr = my_ipaddr;
-    /*
+    /* todo:
       shouldn't we set our_seq_nr to 0 too?
     */
     tcb.their_seq_nr = 0;
@@ -809,7 +817,6 @@ void clear_tcb(void) {
     tcb.rcvd_data_size = 0;
     tcb.unacked_data_len = 0;
 }
-
 
 
 
@@ -908,11 +915,6 @@ void declare_event(event_t e) {
         fflush(stdout);
         
     } else if (s == S_CLOSING && e == E_ACK_RECEIVED) {
-        /*tcb.state = S_TIME_WAIT;*/
-        /*
-          todo: This is a quick hack, to get back to S_CLOSED after the last ack.
-          We have to look into this, if this is really a solution.
-        */
         tcb.state = S_CLOSED;
         clear_tcb();
         printf("%s: Event: E_ACK_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
@@ -922,7 +924,7 @@ void declare_event(event_t e) {
         tcb.state = S_LAST_ACK;
         printf("%s: Event: E_CLOSE, State to S_LAST_ACK\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
-        
+     
     } else if (s == S_LAST_ACK && e == E_ACK_RECEIVED) {
         tcb.state = S_CLOSED;
         clear_tcb();
@@ -1016,8 +1018,7 @@ int send_tcp_packet(ipaddr_t dst,
     bytes_sent = ip_send(dst,IP_PROTO_TCP, 2, tcp, tcp_sz );
     /*fprintf(stderr, "%s: bytes sent: %d\n",inet_ntoa(my_ipaddr),bytes_sent);
     fflush(stderr);*/
-    assert(bytes_sent == tcp_sz);
-    if (bytes_sent == -1){
+    if (bytes_sent == -1) {
         return -1;
     } else {
         return bytes_sent - hdr_sz;
@@ -1043,22 +1044,24 @@ int recv_tcp_packet(ipaddr_t *src_ip,
     tcp_u8t hdr_sz;
     
 
-    while (chksm){
-        proto = 0;
-        while (proto != IP_PROTO_TCP) {
-            len = ip_receive(src_ip, &dst_ip, &proto, &id, &segment);
-            
-            if (len == -1){
-                return -1;
-            }
-        }
-        tcp = (tcp_hdr_t *) segment;
+
+    proto = 0;
+    len = ip_receive(src_ip, &dst_ip, &proto, &id, &segment);
         
-        /* todo: connectionless tier should not touch the tcb, but 
-           can we believe ip? */
-        
-        chksm = tcp_checksum(*src_ip, tcb.our_ipaddr, tcp, len);
+    if ( len == -1 || proto != IP_PROTO_TCP ){
+        return -1;
     }
+    
+    tcp = (tcp_hdr_t *) segment;
+    
+    /* todo: connectionless tier should not touch the tcb, but 
+       can we believe ip? */
+    
+    chksm = tcp_checksum(*src_ip, tcb.our_ipaddr, tcp, len);
+    if (chksm) {
+        return -1;
+    }
+    
                
     /* todo: what is the function of the ID field???*/
 
