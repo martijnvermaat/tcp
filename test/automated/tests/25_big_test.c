@@ -11,7 +11,8 @@
 /*
   Test big_test.c
 
-  sends 80 kilobyte
+  server sends 40 kilobyte
+  
 */
 
 
@@ -28,7 +29,7 @@ static void alarm_handler(int sig) {
 
 int main(void) {
     
-    char server_buf[BUF_SIZE], client_buf[BUF_SIZE];
+    char buf[BUF_SIZE];
     char *eth, *ip1, *ip2;
 
     int pid, status, total, read;
@@ -48,8 +49,6 @@ int main(void) {
         fprintf(stderr, "The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
-    
-
 
     pid = fork();
 
@@ -59,10 +58,6 @@ int main(void) {
     }
 
     if (pid == 0) {
-            /* fill buffer with pattern 012345670123... */
-        for (v=0;v<BUF_SIZE;v++) {
-            client_buf[v] = v % 8;
-        }
 
         /* Client process running in $IP1 */
         eth[0] = '1';
@@ -77,29 +72,55 @@ int main(void) {
             return 1;
         }
         
-        j = tcp_write(client_buf, BUF_SIZE);
-        if (j < 1) {
-            fprintf(stderr, "Client: Writing failed\n"); 
-            return 1;
+                total = 0;
+        fprintf(stderr,"Client: starting to read...\n");
+        fflush(stderr);
+        while (total < BUF_SIZE && !alarm_went_of) {
+            signal(SIGALRM, alarm_handler);
+            alarm(5);
+
+            read = tcp_read(buf, BUF_SIZE - total);
+            if (read < 0) {
+                fprintf(stderr, "Client: Reading %d bytes failed\n",BUF_SIZE-total);
+                return 1;
+            } else {
+                total += read;
+                fprintf(stderr, "Client: Read %d bytes\n",read);
+            }
+            alarm(0);
         }
-        fprintf(stderr,"Client: Sent %d Kbytes\n",j);    
-       
+        fprintf(stderr, "Client: Read %d bytes in total. Closing connection...\n",total);
+        
         
         if (tcp_close() != 0) {
             fprintf(stderr, "Client: Closing connection failed\n");
             return 1;
         }
+        
+                
+        for (j=0; j<total; j++) {
+            if (buf[j] != j % 8) {
+                fprintf(stderr,"ERROR!! Client read error: expected: %d, read: %d",j % 8,buf[j]);
+                break;
+            }
+        }
+        fprintf(stderr, "Client: byte check done.\n",total);
 
         signal(SIGALRM, alarm_handler);
         alarm(3);
 
-        while (tcp_read(client_buf, 4) > 0) {}
+        while (tcp_read(buf, 4) > 0) {}
 
         alarm(0);
 
         return 0;
 
     } else {
+
+        /* fill buffer with pattern 012345670123... */
+        for (v=0;v<BUF_SIZE;v++) {
+            buf[v] = v % 8;
+        }
 
         /* Server process running in $IP2 */
         eth[0]='2';
@@ -118,43 +139,29 @@ int main(void) {
         }
         alarm(0);
         
-        total = 0;
-        fprintf(stderr,"server: starting to read...\n");
-        fflush(stderr);
-        while (total < BUF_SIZE && !alarm_went_of) {
-            signal(SIGALRM, alarm_handler);
-            alarm(5);
 
-            read = tcp_read(server_buf, BUF_SIZE - total);
-            if (read < 0) {
-                fprintf(stderr, "Server: Reading %d bytes failed\n",BUF_SIZE-total);
-                return 1;
-            } else {
-                total += read;
-                fprintf(stderr, "Server: Read %d bytes\n",read);
-            }
-            alarm(0);
-        }
-        fprintf(stderr, "Server: Read %d bytes in total. Closing connection...\n",total);
         
+        
+        j = tcp_write(buf, BUF_SIZE);
+        if (j < 1) {
+            fprintf(stderr, "Server: Writing failed\n"); 
+            return 1;
+        }
+        fprintf(stderr,"Server: Sent %d Kbytes\n",j);    
+       
+
+
         if (tcp_close() != 0) {
             fprintf(stderr, "Server: Closing connection failed\n");
             return 1;
         }
     
-        
-        for (j=0; j<total; j++) {
-            if (server_buf[j] != j % 8) {
-                fprintf(stderr,"ERROR!! Server read error: expected: %d, read: %d",j % 8,server_buf[j]);
-            }
-        }
-        fprintf(stderr, "Server: byte check done.\n",total);
 
 
         signal(SIGALRM, alarm_handler);
         alarm(5);
 
-        while (tcp_read(server_buf, 4) > 0) {}
+        while (tcp_read(buf, 4) > 0) {}
 
         alarm(0);
 
@@ -166,6 +173,4 @@ int main(void) {
     }
     
 }
-
-
 
