@@ -280,7 +280,7 @@ int handle_get(char *buffer, char *url) {
     FILE *fp;
     int byte;
 
-    int length;
+    int length = 0;;
 
     if (!parse_url(url, &filename, &mimetype)) {
         /* bad request */
@@ -294,9 +294,6 @@ int handle_get(char *buffer, char *url) {
     }
 
     length += write_status(buffer, STATUS_OK);
-
-    buffer[length] = '\0';
-    printf("Buffer: %s\n", buffer);
 
     length += write_header(buffer + length, HEADER_CONTENT_TYPE, mimetype);
     length += write_header(buffer + length, HEADER_ISLAND, "Goeree Overflakkee");
@@ -430,7 +427,6 @@ int write_status(char *buffer, http_status status) {
 int write_header(char *buffer, http_header header, char *value) {
 
     char *header_string;
-    int i;
 
     switch (header) {
         case HEADER_CONTENT_TYPE:
@@ -446,19 +442,7 @@ int write_header(char *buffer, http_header header, char *value) {
             return 0;
     }
 
-    printf("1\n");
-
-    printf(header_string);
-    printf("\n");
-    printf(value);
-    printf("\n");
-
-    /* causes segfault */
-    i = sprintf(buffer, "%s: %s\r\n", header_string, value);
-
-    printf("2\n");
-
-    return i;
+    return sprintf(buffer, "%s: %s\r\n", header_string, value);
 
 }
 
