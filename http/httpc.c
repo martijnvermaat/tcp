@@ -28,15 +28,15 @@
 
 int do_request(char *ip, char *filename);
 int handle_response(char *ip, char *filename);
+int get_response_header(void);
 int parse_url(char *url, char **ip, char **filename);
 int parse_status_line(char **status_line, int *status_ok);
 int parse_header(char **header, char **value);
 int read_separator(void);
-int add_to_buffer(void);
 
 
 static char response_buffer[RESPONSE_BUFFER_SIZE];
-static int response_length = 0;
+static int response_buffer_size = 0;
 static int response_pointer = 0;
 static int alarm_went_off = 0;
 
@@ -176,10 +176,17 @@ int handle_response(char *ip, char *filename) {
     FILE *fp;
 
     /* fill buffer with first part of response */
+    if (!get_response_header()) {
+        printf("Request failed: could not retrieve response from server\n");
+        return 0;
+    }
+
+/*
     if (!add_to_buffer()) {
         printf("Request failed: could not retrieve response from server\n");
         return 0;
     }
+*/
 
     /*
       Be carefull to not use the buffer contents after they have been
@@ -227,10 +234,29 @@ int handle_response(char *ip, char *filename) {
     }
 
     /* check for message body */
-    if (response_length <= response_pointer) {
+/*
+    if (response_buffer_size <= response_pointer) {
         printf("No message body was present\n");
         return 1;
     }
+*/
+
+    /* refill buffer if there's nothing left */
+/*
+    if (response_pointer >= response_buffer_size) {
+        response_pointer = 0;
+        length = tcp_read(response_buffer, RESPONSE_BUFFER_SIZE);
+        if (length < 0) {
+            printf("Request failed: could not retrieve message body\n");
+            return 0;
+        }
+        if (length == 0) {
+//todo: should write empty file!!!!
+            printf("Empty message body\n");
+            return 0;
+        }
+    }
+*/
 
     /* open file for writing */
     if ((fp = fopen(filename, "w")) == (FILE *)0) {
@@ -240,10 +266,10 @@ int handle_response(char *ip, char *filename) {
 
     do {
 
-        printf("buffer contains %d bytes!!!!\n", response_length);
+        printf("buffer contains %d bytes!!!!\n", response_buffer_size);
 
         /* write buffer contents to file */
-        while (response_pointer < response_length) {
+        while (response_pointer < response_buffer_size) {
             putc(response_buffer[response_pointer], fp);
             response_pointer++;
         }
@@ -258,34 +284,86 @@ int handle_response(char *ip, char *filename) {
           tcp_read which might fail and we assume we
           miss part of the data. how to solve this?
         */
-        /*if (response_length == RESPONSE_BUFFER_SIZE) {*/
-            response_length = 0;
-            if (!add_to_buffer()) {
-                /*
-                  Actually, we should write to a temp file
-                  and delete it here. Only if all data is
-                  received, copy temp file to real file.
-                  But this is a problem if we have write
-                  rights on filename, but not to create
-                  temp file. So we leave this for the time
-                  being.                  
-                */
-                fclose(fp);
-                printf("Request failed: could not retrieve message body\n");
-                printf("Wrote partial message body to file: %s\n", filename);
-                return 0;
-            }
-/*        } else {
-            response_length = 0;
-        }*/
+        /*if (response_buffer_size == RESPONSE_BUFFER_SIZE) {*/
+
+        signal(SIGALRM, alarm_handler);
+        alarm(TIME_OUT);
+        response_buffer_size = tcp_read(response_buffer, RESPONSE_BUFFER_SIZE);
+        alarm(0);
+
+        /* failed reading */
+        if ((response_buffer_size < 0) || alarm_went_off) {
+            /*
+              Actually, we should write to a temp file
+              and delete it here. Only if all data is
+              received, copy temp file to real file.
+              But this is a problem if we have write
+              rights on filename, but not to create
+              temp file. So we leave this for the time
+              being.                  
+            */
+            fclose(fp);
+            printf("Request failed: could not retrieve message body\n");
+            printf("Wrote partial message body to file: %s\n", filename);
+            return 0;
+        }
 
         response_pointer = 0;
 
-    } while (response_length);
+    } while (response_buffer_size);
 
     fclose(fp);
 
     printf("Wrote message body to file: %s\n", filename);
+
+    return 1;
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int get_response_header(void) {
+
+    int length;
+    int header_complete = 0;
+
+    /* do tcp_read until we find \r\n\r\n in buffer */
+
+    do {
+
+        signal(SIGALRM, alarm_handler);
+        alarm(TIME_OUT);
+        length = tcp_read(response_buffer + response_buffer_size,
+                          RESPONSE_BUFFER_SIZE - response_buffer_size);
+        alarm(0);
+
+        /* could not read any more bytes */
+        if ((length < 1) || alarm_went_off) {
+            return 0;
+        }
+
+        /* byte by byte search for '\r' */
+        while (length > 0) {
+
+            if (response_buffer[response_buffer_size] == '\r') {
+                if ((length >= 4)
+                    && (response_buffer[response_buffer_size+1] == '\n')
+                    && (response_buffer[response_buffer_size+2] == '\r')
+                    && (response_buffer[response_buffer_size+3] == '\n')) {
+                    header_complete = 1;
+                    break;
+                }
+            }
+
+            response_buffer_size++;
+            length--;
+
+        }
+
+        response_buffer_size += length;
+
+    } while (!header_complete);
 
     return 1;
 
@@ -351,7 +429,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     char *protocol;
 
     /* read spaces */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] == ' ')) {
         response_pointer++;
     }
@@ -360,13 +438,13 @@ int parse_status_line(char **status_line, int *status_ok) {
     protocol = response_buffer + response_pointer;
 
     /* read protocol */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] != ' ')) {
         response_pointer++;
     }
 
     /* check end of buffer */
-    if (response_pointer >= response_length) return 0;
+    if (response_pointer >= response_buffer_size) return 0;
 
     /* NULL terminate protocol */
     response_buffer[response_pointer] = '\0';
@@ -378,7 +456,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     }
 
     /* read spaces */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] == ' ')) {
         response_pointer++;
     }
@@ -387,13 +465,13 @@ int parse_status_line(char **status_line, int *status_ok) {
     *status_line = response_buffer + response_pointer;
 
     /* read status number */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] != ' ')) {
         response_pointer++;
     }
 
     /* check end of buffer */
-    if (response_pointer >= response_length) return 0;
+    if (response_pointer >= response_buffer_size) return 0;
 
     /* NULL terminate status number */
     response_buffer[response_pointer] = '\0';
@@ -411,7 +489,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     response_pointer++;
 
     /* read status line */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] != '\r')) {
         response_pointer++;
     }
@@ -420,7 +498,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     response_pointer++;
 
     /* check end of buffer */
-    if (response_pointer >= response_length) return 0;
+    if (response_pointer >= response_buffer_size) return 0;
 
     if (response_buffer[response_pointer] != '\n') {
         return 0;
@@ -431,7 +509,7 @@ int parse_status_line(char **status_line, int *status_ok) {
 
     response_pointer++;
 
-    if (response_pointer >= response_length) {
+    if (response_pointer >= response_buffer_size) {
         return 0;
     }
 
@@ -450,13 +528,13 @@ int parse_header(char **header, char **value) {
     */
 
     /* read spaces */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] == ' ')) {
         response_pointer++;
     }
 
     /* check for end of buffer */
-    if (response_pointer >= response_length) {
+    if (response_pointer >= response_buffer_size) {
         return 0;
     }
 
@@ -469,13 +547,13 @@ int parse_header(char **header, char **value) {
     *header = response_buffer + response_pointer;
 
     /* read header name */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] != ':')) {
         response_pointer++;
     }
 
     /* check for end of buffer */
-    if (response_pointer >= response_length) {
+    if (response_pointer >= response_buffer_size) {
         return 0;
     }
 
@@ -484,7 +562,7 @@ int parse_header(char **header, char **value) {
     response_pointer++;
 
     /* read spaces */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] == ' ')) {
         response_pointer++;
     }
@@ -493,7 +571,7 @@ int parse_header(char **header, char **value) {
     *value = response_buffer + response_pointer;
 
     /* read header value */
-    while ((response_pointer < response_length)
+    while ((response_pointer < response_buffer_size)
            && (response_buffer[response_pointer] != '\r')) {
         response_pointer++;
     }
@@ -502,7 +580,7 @@ int parse_header(char **header, char **value) {
     response_pointer++;
 
     /* check for end of buffer */
-    if (response_pointer >= response_length) {
+    if (response_pointer >= response_buffer_size) {
         return 0;
     }
 
@@ -524,7 +602,7 @@ int parse_header(char **header, char **value) {
 int read_separator(void) {
 
     /* check for end of buffer */
-    if ((response_pointer+1) >= response_length) {
+    if ((response_pointer+1) >= response_buffer_size) {
         return 0;
     }
 
@@ -536,38 +614,6 @@ int read_separator(void) {
 
     /* advance pointer to body */
     response_pointer += 2;
-
-    return 1;
-
-}
-
-
-/* 1 on success, 0 on failure */
-
-int add_to_buffer(void) {
-
-    int length = 0;
-
-/*    printf("add to buffer (ask %d bytes)\n", RESPONSE_BUFFER_SIZE - response_length);
-*/
-    if (response_length >= RESPONSE_BUFFER_SIZE) {
-        return 1;
-    }
-
-    signal(SIGALRM, alarm_handler);
-    alarm(TIME_OUT);
-    length = tcp_read(response_buffer + response_length,
-                      RESPONSE_BUFFER_SIZE - response_length);
-    alarm(0);
-
-/*    printf("stored %d bytes\n", length);
-*/
-
-    if ((length < 0) || alarm_went_off) {
-        return 0;
-    }
-
-    response_length += length;
 
     return 1;
 
