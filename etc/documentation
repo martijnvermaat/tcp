@@ -20,4 +20,5 @@ Design decision:
 Let erop dat er geen ack wordt gestuurd door handle_data() als er geen data in het packet zit!
 Let erop dat ip adres van afzender gelijk blijft tijdens connection.
 we assume data will not be fragmented in another way when it is resent.
-
+geef error als tcp_... methode wordt aangeroepen vanuit verkeerde state!
+Should tcp_write declare event E_PARTNER_DEAD?

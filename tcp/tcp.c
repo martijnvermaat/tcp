@@ -13,11 +13,6 @@
 #define URG_FLAG 0x20
 
 
-/*
-  todo: options in de tcp header
-*/
-
-
 /* States */
 typedef enum{
     S_START, S_CLOSED, S_CONNECTING, S_LISTEN, S_SYN_SENT, S_SYN_ACK_SENT,
@@ -126,7 +121,7 @@ static tcb_t tcb = {
     0,       /* their_previous_seq_nr */
 };
 
-static int alarm_went_of = 0;   /* <- in tcb? */
+static int alarm_went_off = 0;   /* todo: <- in tcb? */
 
 
 
@@ -211,7 +206,7 @@ int tcp_socket(void) {
     tcb.their_seq_nr = 0;
     tcb.rcvd_data_start = 0;
     tcb.rcvd_data_size = 0;
-    alarm_went_of = 0;
+    alarm_went_off = 0;
     */
 
     return 0;
@@ -247,13 +242,13 @@ int tcp_listen(int port, ipaddr_t *src) {
     /* we don't know their port yet */
     tcb.their_port = 0;
     
-    /* reset alarm_went_of */
-    alarm_went_of = 0;
+    /* reset alarm_went_off */
+    alarm_went_off = 0;
     /* use our own alarm fucntion when alarm goes of */
     oldsig = signal(SIGALRM, tcp_alarm);
 
     declare_event(E_LISTEN);
-    while (alarm_went_of == 0 && tcb.state != S_ESTABLISHED) {
+    while (alarm_went_off == 0 && tcb.state != S_ESTABLISHED) {
         do_packet();
         if (tcb.state == S_SYN_RECEIVED) {
             send_syn();
@@ -264,9 +259,9 @@ int tcp_listen(int port, ipaddr_t *src) {
         }
     }
     
-    if (alarm_went_of) {
+    if (alarm_went_off) {
         /* reset alarm_went_of and call original alarm function */
-        alarm_went_of = 0;
+        alarm_went_off = 0;
         oldsig(SIGALRM);
         return -1;
     } else {
@@ -304,9 +299,10 @@ int tcp_read(char *buf, int maxlen) {
     if (tcb.state != S_ESTABLISHED
         && tcb.state != S_FIN_WAIT_1
         && tcb.state != S_FIN_WAIT_2) {
+        
         return -1;
     }
-
+        
     bytes_to_read = min(maxlen, BUFFER_SIZE);
 
 
@@ -315,21 +311,21 @@ int tcp_read(char *buf, int maxlen) {
       handle incomming packets
     */
     
-    /* reset alarm_went_of */
-    alarm_went_of = 0;
+    /* reset alarm_went_off */
+    alarm_went_off = 0;
     /* use our own alarm fucntion when alarm goes of */
     oldsig = signal(SIGALRM, tcp_alarm);
 
     /* call do_packet while conditions are met */
-    while ( alarm_went_of == 0 && 
+    while ( alarm_went_off == 0 && 
             tcb.rcvd_data_psh == 0 && 
             tcb.rcvd_data_size < bytes_to_read) {
         do_packet();
     }
     
-    if (alarm_went_of) {
+    if (alarm_went_off) {
         /* reset alarm_went_of and call original alarm function */
-        alarm_went_of = 0;
+        alarm_went_off = 0;
         oldsig(SIGALRM);
     }  else {
         /* restore old signal handler */
@@ -660,7 +656,6 @@ int send_data(const char *buf, int len) {
         }
                            
         if (wait_for_ack()){
-            /*tcb.our_seq_nr += bytes_sent;*/
             return bytes_sent;
         } 
     }
@@ -779,17 +774,17 @@ int wait_for_ack(void){
     void (*oldsig)(int);
     unsigned oldtimo;
 
-    alarm_went_of = 0;
+    alarm_went_off = 0;
     oldsig = signal(SIGALRM, tcp_alarm);
     oldtimo = alarm(RTT);
     
-    while (alarm_went_of == 0 && !all_acks_received()) {
+    while (alarm_went_off == 0 && !all_acks_received()) {
         do_packet();
     }
 
     signal(SIGALRM, oldsig);    
     alarm(oldtimo);
-    alarm_went_of = 0;
+    alarm_went_off = 0;
     
     return all_acks_received();
 }
@@ -823,7 +818,7 @@ void clear_tcb(void) {
 
 
 void tcp_alarm(int sig){
-    alarm_went_of = 1;
+    alarm_went_off = 1;
     fprintf(stderr,"%s: tcp_alarm went of\n",inet_ntoa(my_ipaddr));
     fflush(stderr);
 }

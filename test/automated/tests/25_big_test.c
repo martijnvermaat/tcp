@@ -7,7 +7,7 @@
 #include <signal.h>
 #include "tcp.h"
 
-#define BUF_SIZE 40000
+#define BUF_SIZE 35000
 /*
   Test big_test.c
 

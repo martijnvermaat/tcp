@@ -17,7 +17,7 @@
   with a different value.
 */
 
-void print_bits(char c);
+
 
 static void alarm_handler(int sig) {
     /* just return to interrupt */
@@ -77,21 +77,21 @@ int main(void) {
             client_buf[0] = v;
             if (tcp_write(client_buf, 1) != 1) {
                 fprintf(stderr, "Client: Writing ASCII character %u failed (", v);
-                print_bits(v);fprintf(stderr,")\n");   
+                
                 return 1;
             }
             printf("Client: Sent ASCII character %u (", v);
-            print_bits(v);printf(")\n");
+            
         }
         /* send last byte (255)*/
         client_buf[0] = v;
         if (tcp_write(client_buf, 1) != 1) {
             fprintf(stderr, "Client: Writing ASCII character %u failed (", v);
-            print_bits(v);fprintf(stderr,")\n");   
+            
             return 1;
         }
         printf("Client: Sent ASCII character %u (", v);
-        print_bits(v);printf(")\n");
+        
 
         
         

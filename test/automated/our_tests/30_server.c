@@ -7,7 +7,7 @@
 #include <signal.h>
 #include "tcp.h"
 
-#define BUF_SIZE 40000
+#define BUF_SIZE 45000
 /*
   Test big_test.c
 
@@ -49,57 +49,6 @@ int main(void) {
         return 1;
     }
     
-
-
-    pid = fork();
-
-    if (pid == -1) {
-        fprintf(stderr, "Unable to fork client process\n");
-        return 1;
-    }
-
-    if (pid == 0) {
-            /* fill buffer with ASCII pattern 012345670123... */
-        for (v=0;v<BUF_SIZE;v++) {
-            client_buf[v] = (v % 8) + 48;
-        }
-
-        /* Client process running in $IP1 */
-        eth[0] = '1';
- 
-        if (tcp_socket() != 0) {
-            fprintf(stderr, "Client: Opening socket failed\n");
-            return 1;
-        }
-
-        if (tcp_connect(inet_aton(ip2), 80) != 0) {
-            fprintf(stderr, "Client: Connecting to server failed\n");
-            return 1;
-        }
-        
-        j = tcp_write(client_buf, BUF_SIZE);
-        if (j < 1) {
-            fprintf(stderr, "Client: Writing failed\n"); 
-            return 1;
-        }
-        fprintf(stderr,"Client: Sent %d Kbytes\n",j);    
-       
-        
-        if (tcp_close() != 0) {
-            fprintf(stderr, "Client: Closing connection failed\n");
-            return 1;
-        }
-
-        signal(SIGALRM, alarm_handler);
-        alarm(3);
-
-        while (tcp_read(client_buf, 4) > 0) {}
-
-        alarm(0);
-
-        return 0;
-
-    } else {
 
         /* Server process running in $IP2 */
         eth[0]='2';
@@ -154,18 +103,16 @@ int main(void) {
         signal(SIGALRM, alarm_handler);
         alarm(5);
 
-        while (tcp_read(server_buf, 4) > 0) {}
+        while (tcp_read(server_buf, 4) > 0) {
+        fprintf(stderr,"did one last read\n");
+        }
 
         alarm(0);
 
-        /* Wait for client process to finish */
-        while (wait(&status) != pid);
-
         return 0;
 
-    }
+    
     
 }
-
 
 
