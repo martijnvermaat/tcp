@@ -179,20 +179,11 @@ void print_buffer(void) {
 /* ----------------------------------- */
 
 
-/* Calls ip_init()             */
-/* Returns 0, but -1 on error */
+/* Calls ip_init() and clears the tcb.
+    This function is idempotent.        
+   Returns 0, but -1 on error  */
 
 int tcp_socket(void) {
-
-    /*
-      Todo: this should initialize tcb and do
-      nothing if called again
-    */
-    
-
-    if (tcb.state != S_START) {
-        return -1;
-    }
 
     if (!my_ipaddr){
         ip_init();
@@ -910,6 +901,11 @@ void declare_event(event_t e) {
         printf("%s: Event: E_SOCKET_OPEN, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
         fflush(stdout);
 
+    } else if (e == E_SOCKET_OPEN) {
+        /* reset connection */
+        tcb.state = S_CLOSED;
+        clear_tcb();
+        
     } else if (s == S_CLOSED && e == E_CONNECT) {
         tcb.state = S_CONNECTING;
         printf("%s: Event: E_CONNECT, State to S_CONNECTING\n",inet_ntoa(my_ipaddr));
