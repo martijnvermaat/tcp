@@ -76,6 +76,11 @@ int do_request(char *ip2) {
         return 1;
     }
 
+    signal(SIGALRM, alarm_handler);
+    alarm(TIME_OUT);
+    while (tcp_read(buffer, MAX_RESPONSE_LENGTH) > 0) {}
+    alarm(0);
+
     return 0;
 
 }
