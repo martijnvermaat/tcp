@@ -250,6 +250,15 @@ int handle_response(char *ip, char *filename) {
         }
 
         /* refill buffer if it was filled completely */
+        /*
+          todo: this is a nasty bug. the idea is that we
+          expect more data when de buffer is completely
+          filled. but in theory it could be the case that
+          one buffer is EXACTLY the amount of data there
+          is to read. in that case, we do another
+          tcp_read which might fail and we assume we
+          miss part of the data. how to solve this?
+        */
         if (response_length == RESPONSE_BUFFER_SIZE) {
             response_length = 0;
             if (!add_to_buffer()) {
