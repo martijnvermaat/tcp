@@ -7,9 +7,14 @@
 #include <signal.h>
 #include "tcp.h"
 
+/*
+  Decide if we use 'size' or
+  'length' (for ALL code).
+*/
 #define LISTEN_PORT 80
 #define TIME_OUT 5
 #define MAX_REQUEST_LENGTH 512
+#define MAX_RESPONSE_LENGTH 1024
 
 
 /*
@@ -19,6 +24,9 @@
 
 
 int serve(void);
+int response(void);
+int write_header(char *buffer);
+int write_body(char *buffer);
 
 
 static void alarm_handler(int sig) {
@@ -59,7 +67,7 @@ int main(void) {
 
 int serve(void) {
 
-    char buffer[MAX_REQUEST_LENGTH];
+    char request_buffer[MAX_REQUEST_LENGTH];
     ipaddr_t saddr;
 
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
@@ -68,12 +76,12 @@ int serve(void) {
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    if (tcp_read(buffer, MAX_REQUEST_LENGTH) < 1) {
+    if (tcp_read(request_buffer, MAX_REQUEST_LENGTH) < 1) {
         return 1;
     }
     alarm(0);
 
-    if (tcp_write("Here's my response.", 19) != 19) {
+    if (!response()) {
         return 1;
     }
 
@@ -83,9 +91,67 @@ int serve(void) {
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    while (tcp_read(buffer, MAX_REQUEST_LENGTH) > 0) {}
+    while (tcp_read(request_buffer, MAX_REQUEST_LENGTH) > 0) {}
     alarm(0);
 
     return 1;
+
+}
+
+
+int response(void) {
+
+    char response_buffer[MAX_RESPONSE_LENGTH];
+    int response_length = 0;
+
+    response_length += write_header(response_buffer + response_length);
+    response_length += write_body(response_buffer + response_length);
+
+    if (tcp_write(response_buffer, response_length) != response_length) {
+        return 0;
+    }
+
+    return 1;
+
+}
+
+
+int write_header(char *buffer) {
+
+    /* I think the -1 is needed here because we don't want a \0 in the buffer...?? */
+    return sprintf(buffer, "%s %d %s\nContent-Type: %s\n\n", "HTTP/1.0", 200, "OK", "text/plain") - 1;
+
+}
+
+
+int write_body(char *buffer) {
+
+    char *file = "./test_response";
+    FILE *fp;
+    int byte;
+    int size = 0;
+
+    fp = fopen(file, "r");
+
+    /*
+      Actually, MAX_RESPONSE_LENGTH also includes header size, so this
+      check on size is not correct ;)
+    */
+
+    while (
+        ((byte = getc(fp)) != EOF)
+        && (size < MAX_RESPONSE_LENGTH)
+        ) {
+        size++;
+        sprintf(buffer + size, "%c", byte);
+        printf("hier eentje\n");
+    }
+
+    /*
+      This seems ok, but in the tests I'm not sure if the last byte
+      of the file is transfered correctly...
+    */
+
+    return size;
 
 }

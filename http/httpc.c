@@ -9,7 +9,7 @@
 
 #define SERVER_PORT 80
 #define TIME_OUT 5
-#define MAX_RESPONSE_LENGTH 512
+#define MAX_RESPONSE_LENGTH 1024
 
 
 /*
@@ -55,7 +55,7 @@ int main(void) {
 
 int do_request(char *ip2) {
 
-    char buffer[MAX_RESPONSE_LENGTH];
+    char response_buffer[MAX_RESPONSE_LENGTH];
 
     if (tcp_connect(inet_aton(ip2), SERVER_PORT) != 0) {
         return 1;
@@ -67,10 +67,13 @@ int do_request(char *ip2) {
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    if (tcp_read(buffer, MAX_RESPONSE_LENGTH) < 1) {
+    if (tcp_read(response_buffer, MAX_RESPONSE_LENGTH) < 1) {
         return 1;
     }
     alarm(0);
+
+    printf("*** Response: ***\n");
+    printf(response_buffer);
 
     if (tcp_close() != 0) {
         return 1;
@@ -78,7 +81,7 @@ int do_request(char *ip2) {
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    while (tcp_read(buffer, MAX_RESPONSE_LENGTH) > 0) {}
+    while (tcp_read(response_buffer, MAX_RESPONSE_LENGTH) > 0) {}
     alarm(0);
 
     return 0;
