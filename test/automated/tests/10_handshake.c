@@ -14,6 +14,11 @@
 */
 
 
+static void alarm_handler(int sig) {
+    /* just return to interrupt */
+}
+
+
 int main(void) {
 
     char *eth, *ip1, *ip2;
@@ -34,8 +39,6 @@ int main(void) {
         fprintf(stderr, "The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
-
-    alarm(15);
 
     pid = fork();
 
@@ -75,10 +78,15 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         if (tcp_listen(80, &saddr) < 0) {
             fprintf(stderr, "Server: Listening for client failed\n");
             return 1;
         }
+
+        alarm(0);
 
         /* Wait for client process to finish */
         while (wait(&status) != pid);

@@ -15,9 +15,14 @@
 */
 
 
+static void alarm_handler(int sig) {
+    /* just return to interrupt */
+}
+
+
 int main(void) {
 
-    char client_buf[8], server_buf[8];
+    char server_buf[8];
     char *eth, *ip1, *ip2;
 
     int pid, status;
@@ -48,8 +53,6 @@ int main(void) {
 
         /* Client process running in $IP1 */
 
-        alarm(5);
-
         eth[0] = '1';
 
         if (tcp_socket() != 0) {
@@ -72,7 +75,12 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         while (tcp_read(server_buf, 4) > 0) {}
+
+        alarm(0);
 
         return 0;
 
@@ -88,15 +96,25 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         if (tcp_listen(80, &saddr) < 0) {
             fprintf(stderr, "Server: Listening for client failed\n");
             return 1;
         }
 
+        alarm(0);
+
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         if (tcp_read(server_buf, 1) != 1) {
             fprintf(stderr, "Server: Reading 1 byte failed\n");
             return 1;
         }
+
+        alarm(0);
 
         if (strcmp(server_buf, "a")) {
             fprintf(stderr, "Server: Reading 'a' failed\n");
@@ -108,7 +126,12 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         while (tcp_read(server_buf, 4) > 0) {}
+
+        alarm(0);
 
         /* Wait for client process to finish */
         while (wait(&status) != pid);

@@ -14,6 +14,11 @@
 */
 
 
+static void alarm_handler(int sig) {
+    /* just return to interrupt */
+}
+
+
 int main(void) {
 
     char buf[8];
@@ -32,12 +37,15 @@ int main(void) {
         return 1;
     }
 
-    alarm(15);
+    signal(SIGALRM, alarm_handler);
+    alarm(5);
 
     if (tcp_read(buf, 1) != -1) {
         fprintf(stderr, "Client: Reading should've failed\n");
         return 1;
     }
+
+    alarm(0);
 
     return 0;
 

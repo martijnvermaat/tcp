@@ -15,6 +15,11 @@
 */
 
 
+static void alarm_handler(int sig) {
+    /* just return to interrupt */
+}
+
+
 int main(void) {
 
     char client_buf[8], server_buf[8];
@@ -36,10 +41,6 @@ int main(void) {
         fprintf(stderr, "The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
-
-    /* shouldn't alarm() be called INSIDE the two different processes below? */
-    alarm(15);
-
 
     pid = fork();
 
@@ -70,10 +71,15 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         if (tcp_read(client_buf, 4) != 4) {
             fprintf(stderr, "Client: Reading 4 bytes failed\n");
             return 1;
         }
+
+        alarm(0);
 
         if (strcmp(client_buf, "bar")) {
             fprintf(stderr, "Client: Reading 'bar' failed\n");
@@ -85,7 +91,12 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         while (tcp_read(server_buf, 4) > 0) {}
+
+        alarm(0);
 
         return 0;
 
@@ -101,15 +112,25 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         if (tcp_listen(80, &saddr) < 0) {
             fprintf(stderr, "Server: Listening for client failed\n");
             return 1;
         }
 
+        alarm(0);
+
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         if (tcp_read(server_buf, 4) != 4) {
             fprintf(stderr, "Server: Reading 4 bytes failed\n");
             return 1;
         }
+
+        alarm(0);
 
         if (strcmp(server_buf, "foo")) {
             fprintf(stderr, "Server: Reading 'foo' failed\n");
@@ -126,7 +147,12 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         while (tcp_read(server_buf, 4) > 0) {}
+
+        alarm(0);
 
         /* Wait for client process to finish */
         while (wait(&status) != pid);

@@ -32,8 +32,6 @@ int main(void) {
         return 1;
     }
 
-    alarm(15);
-
     if (tcp_write(buf, 1) != -1) {
         fprintf(stderr, "Client: Writing should've failed\n");
         return 1;

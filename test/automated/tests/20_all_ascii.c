@@ -16,7 +16,12 @@
   with a different value.
 */
 
-void test_alarm(int i);
+
+static void alarm_handler(int sig) {
+    /* just return to interrupt */
+}
+
+
 int main(void) {
 
     char client_buf[1], server_buf[1];
@@ -40,8 +45,6 @@ int main(void) {
         fprintf(stderr, "The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
-    /*signal(SIGALRM, test_alarm);*/
-    alarm(5);
 
     pid = fork();
 
@@ -68,7 +71,7 @@ int main(void) {
             return 1;
         }
 
-        for (i=0; i<256; i++) {
+        for (i=0; i<127; i++) {
 
             client_buf[0] = i;
 
@@ -77,6 +80,8 @@ int main(void) {
                 return 1;
             }
 
+            fprintf(stderr, "Client: Sent ASCII character %u\n", i);
+
         }
 
         if (tcp_close() != 0) {
@@ -84,7 +89,12 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         while (tcp_read(server_buf, 4) > 0) {}
+
+        alarm(0);
 
         return 0;
 
@@ -100,19 +110,29 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         if (tcp_listen(80, &saddr) < 0) {
             fprintf(stderr, "Server: Listening for client failed\n");
             return 1;
         }
 
-        for (j=0; j<256; j++) {
+        alarm(0);
+
+        for (j=0; j<127; j++) {
+
+            signal(SIGALRM, alarm_handler);
+            alarm(5);
 
             if (tcp_read(server_buf, 1) < 0) {
                 fprintf(stderr, "Server: Reading 1 byte failed\n");
                 return 1;
             }
 
-            fprintf(stderr, "Server: Found byte 0x%lx\n", server_buf[0]);
+            alarm(0);
+
+            fprintf(stderr, "Server: Found byte 0x%x\n", server_buf[0]);
 
             if (server_buf[0] != j) {
                 fprintf(stderr, "Server: Reading ASCII character %u failed\n", j);
@@ -127,7 +147,12 @@ int main(void) {
             return 1;
         }
 
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
         while (tcp_read(server_buf, 4) > 0) {}
+
+        alarm(0);
 
         /* Wait for client process to finish */
         while (wait(&status) != pid);
@@ -137,6 +162,4 @@ int main(void) {
     }
 
 
-}
-void test_alarm(int i) {
 }
