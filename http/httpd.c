@@ -9,7 +9,7 @@
 
 /*
   Decide if we use 'size' or
-  'length' (for ALL code).
+  'length' or 'len' (for ALL code).
 */
 #define LISTEN_PORT 80
 #define TIME_OUT 5
@@ -26,6 +26,7 @@
 int serve(void);
 int response(void);
 int write_header(char *buffer);
+int add_header(char *buffer);
 int write_body(char *buffer);
 
 
@@ -118,8 +119,28 @@ int response(void) {
 
 int write_header(char *buffer) {
 
-    /* I think the -1 is needed here because we don't want a \0 in the buffer...?? */
-    return sprintf(buffer, "%s %d %s\nContent-Type: %s\n\n", "HTTP/1.0", 200, "OK", "text/plain") - 1;
+    int length = 0;
+
+    length += sprintf(buffer, "%s %d %s\n", "HTTP/1.0", 200, "OK");
+
+    length += add_header(buffer + length);
+    length += add_header(buffer + length);
+
+    /*
+      Seems like a \0 byte gets in the way unless
+      we add the -1 here. I don't get it... sprintf
+      should return the length of the string minu
+      the \0 byte I think (and so it does above)?
+    */
+
+    return length + sprintf(buffer + length, "\n") -1;
+
+}
+
+
+int add_header(char *buffer) {
+
+  return sprintf(buffer, "Header: value\n");
 
 }
 
