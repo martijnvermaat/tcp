@@ -350,6 +350,7 @@ int handle_get(char *url) {
 
     char filesize[FILESIZE_LENGTH];
     char lastmodified[LASTMODIFIED_LENGTH];
+    time_t curtime;
 
     char file_buffer[FILE_BUFFER_SIZE];
     int bytes_read;
@@ -382,7 +383,13 @@ int handle_get(char *url) {
     snprintf(filesize, FILESIZE_LENGTH, "%ld", (long) file_stat.st_size);
 
     /* datetime format as in RFC 1123 */
-    strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&file_stat.st_mtime));
+    /* if lastmodified is in the future, just send the current datetime */
+    if (difftime(time(NULL), file_stat.st_mtime) < 0) {
+        time(&curtime);
+        strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
+    } else {
+        strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&file_stat.st_mtime));
+    }
 
     /* write header and header/body seperator */
     if (!(write_status(STATUS_OK)
@@ -505,15 +512,24 @@ int file_name_character(char *c) {
 
 int write_error(http_status status) {
 
+#define LASTMODIFIED_LENGTH 32
+    char lastmodified[LASTMODIFIED_LENGTH];
+    time_t curtime;
+
     /* we could send some more info in an HTML body here... */
 
     /* maybe the error occured after some data was already
        written, so reset the buffer */
     response_buffer_size = 0;
 
+    /* send current time as lastmodified */
+    time(&curtime);
+    strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
+
     return (write_status(status)
             && write_header(HEADER_CONTENT_TYPE, "text/plain")
             && write_header(HEADER_CONTENT_LENGTH, "0")
+            && write_header(HEADER_LAST_MODIFIED, lastmodified)
             && write_standard_headers());
 
 }
