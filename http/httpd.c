@@ -295,6 +295,9 @@ int handle_get(char *buffer, char *url) {
 
     length += write_status(buffer, STATUS_OK);
 
+    buffer[length] = '\0';
+    printf("Buffer: %s\n", buffer);
+
     length += write_header(buffer + length, HEADER_CONTENT_TYPE, mimetype);
     length += write_header(buffer + length, HEADER_ISLAND, "Goeree Overflakkee");
     length += write_header(buffer + length, HEADER_SERVER, "Tiny httpd.c / 0.1 (maybe on Minix)");
