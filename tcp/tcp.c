@@ -45,7 +45,6 @@ void ack_these_bytes(int bytes_delivered);
 
 tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len);
 void tcp_alarm(int sig);
-int fin_received(void);
 void receive_new_data(int maxlen);
 int deliver_received_bytes(char *buf, int maxlen);
 
@@ -304,15 +303,22 @@ int tcp_read(char *buf, int maxlen) {
         return -1;
     }
     
-    /*  if the buffer is empty, and a fin is received, return 0 */
-    if ( tcb.rcvd_data_size == 0 && fin_received() ) {
-        return 0;
+    /*  if the buffer is empty... */
+    if ( tcb.rcvd_data_size == 0 ) {
+    
+        /* and a fin is received, return 0; everything went fine*/
+        if (tcb.state == S_CLOSING || 
+            tcb.state == S_CLOSE_WAIT || 
+            tcb.state == S_LAST_ACK) {
+            return 0;
+        } 
+        
+        /*and the connection is closed, return ERROR, no read possible */
+        if (tcb.state == S_CLOSED) {
+            return -1;
+        }    
     }
     
-    /* if the buffer is empty, and the connection is closed, return ERROR */
-    if ( tcb.rcvd_data_size == 0 && tcb.state == S_CLOSED ) {
-        return -1;
-    }
 
     /* if we are in one of these states we haven't received a fin yet, */
     /* so we try to receive new data */
@@ -354,7 +360,11 @@ void receive_new_data(int maxlen) {
     while ( alarm_went_off == 0 && 
             tcb.rcvd_data_psh == 0 && 
             tcb.rcvd_data_size < bytes_to_read &&
-            !fin_received() ) {
+            /* make sure we didn't receive a fin: */
+            tcb.state != S_CLOSED &&
+            tcb.state != S_CLOSE_WAIT &&
+            tcb.state != S_LAST_ACK) {
+            
         do_packet();
     }
      
@@ -866,17 +876,6 @@ void tcp_alarm(int sig){
 }
 
 
-int fin_received(void) {
-    if (tcb.state == S_CLOSE_WAIT ||
-        tcb.state == S_LAST_ACK ||
-        tcb.state == S_CLOSING) {
-        
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
 
 /* performs state transition based on event and current state */
 void declare_event(event_t e) {
@@ -952,9 +951,6 @@ void declare_event(event_t e) {
         fflush(stdout);
   
     } else if (s == S_FIN_WAIT_2 && e == E_FIN_RECEIVED) {
-        /*tcb.state = S_TIME_WAIT;
-        printf("%s: Event: E_FIN_RECEIVED, State to S_TIME_WAIT\n",inet_ntoa(my_ipaddr));
-        fflush(stdout);*/
         tcb.state = S_CLOSED;
         clear_tcb();
         printf("%s: Event: E_FIN_RECEIVED, State to S_CLOSED\n",inet_ntoa(my_ipaddr));
