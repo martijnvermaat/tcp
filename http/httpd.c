@@ -381,6 +381,7 @@ int file_name_character(char *c) {
 
 void send_response(char *buffer) {
 
+    /* maybe we shouldn't make this buffer NULL terminating... */
     int length = strlen(buffer);
     int bytes_sent = 0;
     int tries = 0;
