@@ -13,6 +13,11 @@
 #define URG_FLAG 0x20
 
 
+/*
+  todo: options in de tcp header
+*/
+
+
 /* States */
 typedef enum{
     S_START, S_CLOSED, S_CONNECTING, S_LISTEN, S_SYN_SENT, S_SYN_ACK_SENT,

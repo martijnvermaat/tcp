@@ -22,6 +22,13 @@
 
 
 /*
+  todo: determine which headers are obligatory and which are not!
+  todo: think about $IP1, $IP2, and $ETH: I don't think we need
+        al these to be set. how will they test our programs?
+*/
+
+
+/*
   Decide if we use 'size' or 'length' or 'len' (for ALL code).
   Also for 'chars' and 'bytes'. (Be consistent.)
 */
@@ -51,7 +58,7 @@ typedef enum {
 } http_status;
 
 typedef enum {
-    HEADER_CONTENT_TYPE, HEADER_SERVER, HEADER_ISLAND,
+    HEADER_CONTENT_TYPE, HEADER_SERVER, HEADER_DATE,
     HEADER_CONTENT_LENGTH, HEADER_LAST_MODIFIED
 } http_header;
 
@@ -66,7 +73,7 @@ int file_name_character(char *c);
 int write_data(const char *data, int length);
 int write_status(http_status status);
 int write_error(http_status status);
-int write_standard_headers(void);
+int write_general_headers(void);
 int write_header(http_header header, char *value);
 
 
@@ -393,10 +400,10 @@ int handle_get(char *url) {
 
     /* write header and header/body seperator */
     if (!(write_status(STATUS_OK)
+          && write_general_headers()
           && write_header(HEADER_CONTENT_TYPE, mimetype)
           && write_header(HEADER_CONTENT_LENGTH, filesize)
           && write_header(HEADER_LAST_MODIFIED, lastmodified)
-          && write_standard_headers()
           && write_data("\r\n", 2))) {
         fclose(fp);
         return 0;
@@ -527,10 +534,10 @@ int write_error(http_status status) {
     strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
 
     return (write_status(status)
+            && write_general_headers()
             && write_header(HEADER_CONTENT_TYPE, "text/plain")
             && write_header(HEADER_CONTENT_LENGTH, "0")
-            && write_header(HEADER_LAST_MODIFIED, lastmodified)
-            && write_standard_headers());
+            && write_header(HEADER_LAST_MODIFIED, lastmodified));
 
 }
 
@@ -605,9 +612,11 @@ int write_status(http_status status) {
 
 /* 1 on success, 0 on failure */
 
-int write_standard_headers(void) {
+int write_general_headers(void) {
 
-    return (write_header(HEADER_ISLAND, "Goeree Overflakkee")
+    /* todo: write current date */
+
+    return (write_header(HEADER_DATE, "vandaag is het zo laat")
             && write_header(HEADER_SERVER, VERSION));
 
 }
@@ -633,8 +642,8 @@ int write_header(http_header header, char *value) {
         case HEADER_SERVER:
             header_string = "Server";
             break;
-        case HEADER_ISLAND:
-            header_string = "Nice-Island";
+        case HEADER_DATE:
+            header_string = "Date";
             break;
         default:
             return 1;

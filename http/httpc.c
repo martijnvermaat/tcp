@@ -7,18 +7,29 @@
 #include <signal.h>
 #include "tcp.h"
 
-#define SERVER_PORT 80
-#define TIME_OUT 5
-#define RBUFFER_SIZE 1024
-
 
 /*
   httpc.c
-  A simple HTTP/1.0 client.
+  A tiny HTTP/1.0 client.
+
+  See http://www.w3.org/Protocols/HTTP/1.0/draft-ietf-http-spec.html
+  for a reference guide.
 */
 
 
+#define SERVER_PORT 80
+#define TIME_OUT 5
+#define REQUEST_BUFFER_SIZE 512
+#define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
+#define PROTOCOL "HTTP/1.0"
+
+
 int do_request(char *ip2);
+
+
+static char response_buffer[RESPONSE_BUFFER_SIZE];
+static int response_length = 0;
+static int response_pointer = 0;
 
 
 static void alarm_handler(int sig) {
@@ -26,9 +37,19 @@ static void alarm_handler(int sig) {
 }
 
 
-int main(void) {
+/* 0 on success, otherwise failure */
+
+int main(int argc, char** argv) {
 
     char *eth, *ip1, *ip2;
+
+    char *ip;
+    char *filename;
+
+    if (argc < 2) {
+        printf("No url found.\nUsage: %s url\n", argv[0]);
+        return 1;
+    }
 
     eth = getenv("ETH");
     if (!eth) {
@@ -48,45 +69,254 @@ int main(void) {
         return 1;
     }
 
-    return do_request(ip2);
-
-}
-
-
-int do_request(char *ip2) {
-
-    char response_buffer[RBUFFER_SIZE+1];
-    int length;
-
-    if (tcp_connect(inet_aton(ip2), SERVER_PORT) != 0) {
+    if (!parse_url(argv[1], &ip, &filename)) {
+        printf("Invalid url: %s\n", argv[1]);
         return 1;
     }
 
-    if (tcp_write("GET /index.html HTTP/1.0\r\n", 26) != 26) {
+    /* connect to http server */
+    if (tcp_connect(inet_aton(ip), SERVER_PORT)) {
+        printf("Request failed: could not connect to server\n");
+        return 0;
+    }
+
+    /* do request */
+    if (!do_request(ip, filename)) {
         return 1;
     }
 
-    do {
-        signal(SIGALRM, alarm_handler);
-        alarm(TIME_OUT);
-        length = tcp_read(response_buffer, RBUFFER_SIZE);
-        if (length < 0) return 1;
-        alarm(0);
+    /* handle response */
+    if (!handle_response(filename)) {
+        return 1;
+    }
 
-        response_buffer[length] = '\0';
-        fprintf(stderr, response_buffer);
-    } while (length);
-
-    printf("*** Response was cool ***");
-
+    /* close connection */
     if (tcp_close() != 0) {
+        printf("Closing connection failed\n");
         return 1;
     }
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    while (tcp_read(response_buffer, RBUFFER_SIZE) > 0) {}
+    while (tcp_read(response_buffer, RESPONSE_BUFFER_SIZE) > 0) {}
     alarm(0);
+
+    return 0;
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int do_request(char *ip, char *filename) {
+
+    char request_buffer[REQUEST_BUFFER_SIZE];
+    int request_length;
+
+    int sent = 0;
+    int total_sent = 0;
+
+    /* create request */
+    request_length = snprintf(request_buffer,
+                              REQUEST_BUFFER_SIZE,
+                              "GET /%s %s\r\n", filename, PROTOCOL);
+
+    if ((request_length < 0)
+        || (request_length >= REQUEST_BUFFER_SIZE)) {
+        printf("Filename too long: %s\n", filename);
+        return 0;
+    }
+
+    /* send request */
+    do {
+        sent = tcp_write(request_buffer + total_sent, request_length - total_sent);
+        total_sent += sent;
+    } while (sent && total_sent < request_length);
+
+    /* sending data failed */
+    if (!sent) {
+        printf("Request failed: could not send request to server\n");
+        return 0;
+    }
+
+    return 1;
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int handle_response(char *filename) {
+
+    char *status_line;
+    int status_ok;
+
+    /* fill buffer with first part of response */
+    if (!add_to_buffer()) {
+        printf("Request failed: could not retreive response from server\n");
+        return 0;
+    }
+
+    /*
+      Be carefull to not use the buffer contents after they have been
+      overwritten. We assume the entire header fits in the buffer at
+      one time, so we can reference to header fields untill we call
+      add_to_buffer for reading more of the body.
+    */
+
+    /* read status line */
+    if (!parse_status_line(&status_line, &status_ok)) {
+        printf("Request failed: invalid response status code sent by server\n");
+        return 0;
+    }
+
+    printf("status: %s\n", status_line);
+    printf("is this ok? %d\n", status_ok);
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int parse_status_line(char **status_line, int *status_ok) {
+
+    char *protocol;
+
+    /* read spaces */
+    while ((response_pointer < response_size)
+           && (response_buffer[response_pointer] == ' ')) {
+        response_pointer++;
+    }
+
+    /* start of protocol */
+    protocol = response_buffer + response_pointer;
+
+    /* read protocol */
+    while ((response_pointer < response_size)
+           && (response_buffer[response_pointer] != ' ')) {
+        response_pointer++;
+    }
+
+    /* check end of buffer */
+    if (response_pointer >= response_length) return 0;
+
+    /* NULL terminate protocol */
+    response_buffer[response_pointer] = '\0';
+    response_pointer++;
+
+    /* read spaces */
+    while ((response_pointer < response_size)
+           && (response_buffer[response_pointer] == ' ')) {
+        response_pointer++;
+    }
+
+    /* start of status */
+    *status_line = response_buffer + response_pointer;
+
+    /* read status number */
+    while ((response_pointer < response_size)
+           && (response_buffer[response_pointer] != ' ')) {
+        response_pointer++;
+    }
+
+    /* check end of buffer */
+    if (response_pointer >= response_length) return 0;
+
+    /* NULL terminate status number */
+    response_buffer[response_pointer] = '\0';
+
+    /* check for status 200 Ok */
+    if (strcmp(*status_line, "200") == 0) {
+        *status_ok = 1;
+    } else {
+        *status_ok = 0;
+    }
+
+    /* put space back, we need the original status line */
+    response_buffer[response_pointer] = ' ';
+    response_pointer++;
+
+    /* read status line */
+    while ((response_pointer < response_size)
+           && (response_buffer[response_pointer] != '\r')) {
+        response_pointer++;
+    }
+
+    /* skip to '\n' */
+    response_pointer++;
+
+    /* check end of buffer */
+    if (response_pointer >= response_length) return 0;
+
+    if (response_buffer[response_pointer] != '\n') {
+        return 0;
+    }
+
+    /* end of status line */
+    response_buffer[response_pointer-1] = '\0';
+
+    response_pointer++;
+
+    if (response_pointer >= response_length) {
+        return 0;
+    }
+
+    return 1;
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int add_to_buffer(void) {
+
+    int length = 0;
+
+    while ((response_length < RESPONSE_BUFFER_SIZE)
+           && (length >= 0)) {
+
+        /* fetch data */
+        signal(SIGALRM, alarm_handler);
+        alarm(TIME_OUT);
+        length = tcp_read(response_buffer + response_length,
+                          RESPONSE_BUFFER_SIZE - response_length);
+        alarm(0);
+
+    }
+
+    if (length < 0) {
+        return 0;
+    }
+
+    return 1;
+
+}
+
+
+
+
+
+    if (length < 0) {
+        printf("Request failed: could not retreive response from server\n");
+        return 0;
+    }
+
+
+}
+
+
+
+
+
+
+    /* send request */
+    if (tcp_write(request_buffer, request_length) != request_length) {
+        return 1;
+    }
+
+
+    printf("*** Response was cool ***");
+
 
     return 0;
 
