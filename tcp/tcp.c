@@ -47,7 +47,7 @@ void ack_these_bytes(int bytes_delivered);
 tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len);
 void tcp_alarm(int sig);
 int min(int x, int y);
-
+int max(int x, int y);
 void print_bits(char c);
 
 
@@ -61,7 +61,7 @@ typedef struct tcb {
     tcp_u32t their_seq_nr;  /* last byte we acked */
     tcp_u32t ack_nr;
     tcp_u32t expected_ack;
-    char rcv_data[BUFFER_SIZE+1];  /* why +1 ? */
+    char rcv_data[BUFFER_SIZE+1];  /* todo: why +1 ? */
     int rcvd_data_start;
     int rcvd_data_size;
     int rcvd_data_psh;   /* number of bytes to push, always aligned to start of buffer */
@@ -141,7 +141,7 @@ void print_buffer(void) {
     */
 
     int i;
-/*    
+    
     printf("\n\nBuffer contains %d/%d bytes starting at %d\n", tcb.rcvd_data_size, BUFFER_SIZE, tcb.rcvd_data_start);
     printf("Of this, %d bytes have to be pushed\n", tcb.rcvd_data_psh);
     printf("Buffer contains:\n\n");
@@ -160,7 +160,7 @@ void print_buffer(void) {
         }
 
     }
-*/
+
     printf("\n\n");
     fflush(stdout);
 
@@ -282,7 +282,7 @@ int tcp_close(void){
 
 int tcp_read(char *buf, int maxlen) {
 
-    int read_bytes;
+    int bytes_to_read;
     int delivered_bytes;
     void (*oldsig)(int);
     unsigned oldtimo;
@@ -296,7 +296,7 @@ int tcp_read(char *buf, int maxlen) {
         return -1;
     }
 
-    read_bytes = min(maxlen, BUFFER_SIZE);
+    bytes_to_read = min(maxlen, BUFFER_SIZE);
 
 
     /*
@@ -312,7 +312,7 @@ int tcp_read(char *buf, int maxlen) {
     /* call do_packet while conditions are met */
     while ( alarm_went_of == 0 && 
             tcb.rcvd_data_psh == 0 && 
-            tcb.rcvd_data_size < read_bytes) {
+            tcb.rcvd_data_size < bytes_to_read) {
         do_packet();
     }
     
@@ -336,11 +336,11 @@ int tcp_read(char *buf, int maxlen) {
 
     /* adjust buffer pointers */
     tcb.rcvd_data_size -= delivered_bytes;
-    tcb.rcvd_data_psh = min(tcb.rcvd_data_psh - delivered_bytes, 0);
+    tcb.rcvd_data_psh = max(tcb.rcvd_data_psh - delivered_bytes, 0);
     tcb.rcvd_data_start = (tcb.rcvd_data_start + delivered_bytes) % BUFFER_SIZE;
-
-    printf("\n\ntcp_read: read %d bytes: %s\n\n", delivered_bytes, buf);
-
+    
+    printf("\ntcp_read: read %d bytes: %s\n", delivered_bytes, buf);
+    printf("tcb.received_data_psh to: %d\n", tcb.rcvd_data_psh);
     /*ack_these_bytes(deliver_bytes);*/
 
     return delivered_bytes;
@@ -419,9 +419,10 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
     if (!(ACK_FLAG & flags)){
         return;
     }
+    /*
      printf("\n%s: incoming ack: %lu \n",inet_ntoa(my_ipaddr),ack_nr);
      printf("%s: expected ack: %lu\n", inet_ntoa(my_ipaddr),tcb.expected_ack);
-     fflush(stdout);
+     fflush(stdout);*/
     if (ack_nr == tcb.expected_ack) {
 
         tcb.our_seq_nr = ack_nr;
@@ -548,8 +549,8 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
     if (!(SYN_FLAG & flags)){
         return;
     }
-    fprintf(stderr,"\n%s syn received\n",inet_ntoa(my_ipaddr)); 
-    fflush(stderr);
+    /*fprintf(stderr,"%s syn received\n",inet_ntoa(my_ipaddr)); 
+    fflush(stderr);*/
 
     if (get_state() == S_LISTEN) {
         tcb.their_ipaddr = their_ip;
@@ -613,6 +614,8 @@ int send_data(const char *buf, int len) {
     int retransmission_allowed = MAX_RETRANSMISSION;
     /*fprintf(stderr, "%s: send_data starts\n",inet_ntoa(my_ipaddr));
     fflush(stderr);*/
+    printf("%s sending data\n",inet_ntoa(my_ipaddr));
+    fflush(stdout);
     while (retransmission_allowed--) {
         bytes_sent = send_tcp_packet(tcb.their_ipaddr, tcb.our_port, 
             tcb.their_port, tcb.our_seq_nr, tcb.ack_nr, flags, 1, buf, len);
@@ -987,13 +990,13 @@ int send_tcp_packet(ipaddr_t dst,
     tcp->urg_pointer = 0;
 
     memcpy(&segment[hdr_sz], data, data_sz);
-    
+    /*
     printf("\n || == %s is sending segment ==\n",inet_ntoa(my_ipaddr));
     printf(" || seq_nr %lu\n",seq_nr);
     printf(" || ack_nr %lu\n",ack_nr);
     printf(" || checksum 0x%x\n",tcp->checksum);
     printf(" || flags %u\n\n",tcp->flags);
-    
+    */
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     if (tcp->checksum != 0) { 
@@ -1137,6 +1140,10 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
 
 int min(int x, int y) {
     return ((x) < (y) ? (x) : (y));
+}
+
+int max(int x, int y) {
+    return ((x) > (y) ? (x) : (y));
 }
 
 void print_bits(char c) {

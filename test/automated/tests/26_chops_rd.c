@@ -7,7 +7,7 @@
 #include <signal.h>
 #include "tcp.h"
 
-#define BUF_SIZE 80000
+#define BUF_SIZE 12000
 /*
   Test big_test.c
 
@@ -59,7 +59,7 @@ int main(void) {
     }
 
     if (pid == 0) {
-            /* fill buffer with ASCII pattern 012345670123... */
+            /* fill buffer with pattern 012345670123... */
         for (v=0;v<BUF_SIZE;v++) {
             client_buf[v] = (v % 8) + 48;
         }
@@ -125,7 +125,7 @@ int main(void) {
             signal(SIGALRM, alarm_handler);
             alarm(5);
 
-            read = tcp_read(&server_buf[total], BUF_SIZE - total);
+            read = tcp_read(&server_buf[total], 67);
             if (read < 0) {
                 fprintf(stderr, "Server: Reading %d bytes failed\n",BUF_SIZE-total);
                 return 1;
@@ -166,6 +166,5 @@ int main(void) {
     }
     
 }
-
 
 

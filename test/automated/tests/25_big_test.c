@@ -29,7 +29,7 @@ static void alarm_handler(int sig) {
 
 int main(void) {
     
-    char buf[BUF_SIZE];
+    char client_buf[BUF_SIZE],server_buf[BUF_SIZE];
     char *eth, *ip1, *ip2;
 
     int pid, status, total, read;
@@ -79,7 +79,7 @@ int main(void) {
             signal(SIGALRM, alarm_handler);
             alarm(5);
 
-            read = tcp_read(buf, BUF_SIZE - total);
+            read = tcp_read(&client_buf[total], BUF_SIZE - total);
             if (read < 0) {
                 fprintf(stderr, "Client: Reading %d bytes failed\n",BUF_SIZE-total);
                 return 1;
@@ -99,8 +99,8 @@ int main(void) {
         
                 
         for (j=0; j<total; j++) {
-            if (buf[j] != j % 8) {
-                fprintf(stderr,"ERROR!! Client read error: expected: %d, read: %d",j % 8,buf[j]);
+            if (client_buf[j] != j % 8) {
+                fprintf(stderr,"ERROR!! Client read error: expected: %d, read: %d",j % 8,client_buf[j]);
                 break;
             }
         }
@@ -109,7 +109,7 @@ int main(void) {
         signal(SIGALRM, alarm_handler);
         alarm(3);
 
-        while (tcp_read(buf, 4) > 0) {}
+        while (tcp_read(client_buf, 4) > 0) {}
 
         alarm(0);
 
@@ -119,7 +119,7 @@ int main(void) {
 
         /* fill buffer with pattern 012345670123... */
         for (v=0;v<BUF_SIZE;v++) {
-            buf[v] = v % 8;
+            server_buf[v] = v % 8;
         }
 
         /* Server process running in $IP2 */
@@ -142,7 +142,7 @@ int main(void) {
 
         
         
-        j = tcp_write(buf, BUF_SIZE);
+        j = tcp_write(server_buf, BUF_SIZE);
         if (j < 1) {
             fprintf(stderr, "Server: Writing failed\n"); 
             return 1;
@@ -161,7 +161,7 @@ int main(void) {
         signal(SIGALRM, alarm_handler);
         alarm(5);
 
-        while (tcp_read(buf, 4) > 0) {}
+        while (tcp_read(server_buf, 4) > 0) {}
 
         alarm(0);
 
