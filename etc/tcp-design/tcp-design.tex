@@ -3,6 +3,7 @@
 \usepackage[english]{babel}
 \usepackage{a4}
 \usepackage{latexsym}
+\usepackage{graphicx}
 %\usepackage[
 %    colorlinks,
 %    pdftitle={Design Documentation TCP Implementation},
@@ -326,20 +327,20 @@ went of on every cycle.
 
 \appendix
 
-\section{State transition diagrams} \label{sec:A}
+\section{State transition diagrams}\label{sec:A}
 
-\paragraph
-The three way handshake diagram shows the states we use in our TCP 
-implementation. A capital label denotes a call to TCP by the application. 
-The other labels refer to events that are caused by TCP itself, for example 
-incoming packets or timers that go off. \lstinline|partner_dead| means that 
-after resending a packet 10 times, the other party is considered to be retired.
-
+\paragraph{}
+The three way handshake diagram (figure \ref{figuur:handshake}) shows the
+states we use in our TCP implementation. A capital label denotes a call to
+TCP by the application. The other labels refer to events that are caused by
+TCP itself, for example incoming packets or timers that go
+off. \lstinline|partner_dead| means that after resending a packet 10 times,
+the other party is considered to be retired.
 
 
 \begin{figure}
 \begin{center}
-\includegraphics{images/handshake.png}
+\includegraphics{handshake.png}
 \end{center}
 \caption{Three way Handshake}
 \label{figuur:handshake}
@@ -347,7 +348,7 @@ after resending a packet 10 times, the other party is considered to be retired.
 
 \begin{figure}
 \begin{center}
-\includegraphics{images/termination.png}
+\includegraphics{termination.png}
 \end{center}
 \caption{Connection termination}
 \label{figuur:termination}
