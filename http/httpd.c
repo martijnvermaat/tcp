@@ -4,6 +4,8 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <signal.h>
 #include <errno.h>
 #include <pwd.h>
@@ -32,7 +34,7 @@
 #define FILE_BUFFER_SIZE 80000 /* number of bytes to read at a time from a file, should
                                   be at least the size of RESPONSE_BUFFER_SIZE */
 #define PROTOCOL "HTTP/1.0"
-#define VERSION "Tiny httpd.c / 0.1 (maybe on Minix)"
+#define VERSION "Tiny httpd.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
 
 typedef enum {
@@ -50,7 +52,7 @@ typedef enum {
 
 typedef enum {
     HEADER_CONTENT_TYPE, HEADER_SERVER, HEADER_ISLAND,
-    HEADER_CONTENT_LENGTH
+    HEADER_CONTENT_LENGTH, HEADER_LAST_MODIFIED
 } http_header;
 
 
@@ -64,7 +66,7 @@ int file_name_character(char *c);
 int write_data(const char *data, int length);
 int write_status(http_status status);
 int write_error(http_status status);
-int write_standard_headers();
+int write_standard_headers(void);
 int write_header(http_header header, char *value);
 
 
@@ -77,7 +79,7 @@ static void alarm_handler(int sig) {
 }
 
 
-/* 1 on failure, no return on success */
+/* 1 on failure, no return or 0 on success */
 
 int main(int argc, char** argv) {
 
@@ -341,8 +343,15 @@ int handle_get(char *url) {
     char *mimetype;
 
     FILE *fp;
-    char filesize[12];
-    char file_buffer[FILE_BUFFER_SIZE+1];
+    struct stat file_stat;
+
+#define FILESIZE_LENGTH 12
+#define LASTMODIFIED_LENGTH 32
+
+    char filesize[FILESIZE_LENGTH];
+    char lastmodified[LASTMODIFIED_LENGTH];
+
+    char file_buffer[FILE_BUFFER_SIZE];
     int bytes_read;
     char byte;
 
@@ -365,19 +374,21 @@ int handle_get(char *url) {
         }
     }
 
-    /* obtain file size */
-    /* this is not ideal code... maybe replace with stat() or so... */
+    /* get file attributes */
+    if (stat(filename, &file_stat)) {
+        return write_error(STATUS_INTERNAL_SERVER_ERROR);
+    }
 
-    fseek(fp, 0, SEEK_END);
-    filesize[sprintf(filesize, "%ld", ftell(fp))] = '\0';
-    rewind(fp);
+    snprintf(filesize, FILESIZE_LENGTH, "%ld", (long) file_stat.st_size);
 
-    /* todo: last-modified */
+    /* datetime format as in RFC 1123 */
+    strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&file_stat.st_mtime));
 
     /* write header and header/body seperator */
     if (!(write_status(STATUS_OK)
           && write_header(HEADER_CONTENT_TYPE, mimetype)
           && write_header(HEADER_CONTENT_LENGTH, filesize)
+          && write_header(HEADER_LAST_MODIFIED, lastmodified)
           && write_standard_headers()
           && write_data("\r\n", 2))) {
         fclose(fp);
@@ -402,65 +413,11 @@ int handle_get(char *url) {
 
     } while (bytes_read == FILE_BUFFER_SIZE);
 
-
-/*
-    do {
-        bytes_read = (int) fread(file_buffer, sizeof(file_buffer), 1, fp);
-        printf("read data: %d\n", bytes_read);
-        if (!write_data(file_buffer, bytes_read)) {
-            fclose(fp);
-            return 0;
-        }
-    } while (bytes_read == FILE_BUFFER_SIZE);
-*/
-
     /* error occured during reading of file */
     if (ferror(fp)) {
         fclose(fp);
         return write_error(STATUS_INTERNAL_SERVER_ERROR);
     }
-
-    /* write file contents to response buffer */
-    /*
-    while (
-        ((byte = getc(fp)) != EOF)
-        && (length < MAX_RESPONSE_LENGTH)
-        ) {
-        length += sprintf(buffer + length, "%c", byte);
-    }
-    */
-
-    /* the following would allocate enough memory to read every
-       file of arbritary size:
-
-  FILE * pFile;
-  long lSize;
-  char * buffer;
-
-  pFile = fopen ( "myfile.txt" , "rb" );
-  if (pFile==NULL) exit (1);
-
-  // obtain file size.
-  fseek (pFile , 0 , SEEK_END);
-  lSize = ftell (pFile);
-  rewind (pFile);
-
-  // allocate memory to contain the whole file.
-  buffer = (char*) malloc (lSize);
-  if (buffer == NULL) exit (2);
-
-  // copy the file into the buffer.
-  fread (buffer,1,lSize,pFile);
-
-  // the whole file is loaded in the buffer.
-
-  // terminate
-  fclose (pFile);
-  free (buffer);
-  return 0;
-
-       maybe we can use something like this...
-    */
 
     fclose(fp);
 
@@ -613,13 +570,12 @@ int write_status(http_status status) {
       like write_data.
     */
 
-    /* the +1 is because \0 is copied not counted by snprintf */
     written = snprintf(response_buffer + response_buffer_size,
-                       RESPONSE_BUFFER_SIZE - response_buffer_size + 1,
+                       RESPONSE_BUFFER_SIZE - response_buffer_size,
                        "%s %d %s\r\n", PROTOCOL, status_code, status_string);
 
     if ((written < 0)
-        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size + 1))) {
+        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size))) {
         response_buffer_size += written;
         return 0;
     }
@@ -633,7 +589,7 @@ int write_status(http_status status) {
 
 /* 1 on success, 0 on failure */
 
-int write_standard_headers() {
+int write_standard_headers(void) {
 
     return (write_header(HEADER_ISLAND, "Goeree Overflakkee")
             && write_header(HEADER_SERVER, VERSION));
@@ -655,6 +611,9 @@ int write_header(http_header header, char *value) {
         case HEADER_CONTENT_LENGTH:
             header_string = "Content-Length";
             break;
+        case HEADER_LAST_MODIFIED:
+            header_string = "Last-Modified";
+            break;
         case HEADER_SERVER:
             header_string = "Server";
             break;
@@ -674,15 +633,14 @@ int write_header(http_header header, char *value) {
       like write_data.
     */
 
-    /* the +1 is because \0 is copied not counted by snprintf */
     written = snprintf(response_buffer + response_buffer_size,
-                       RESPONSE_BUFFER_SIZE - response_buffer_size + 1,
+                       RESPONSE_BUFFER_SIZE - response_buffer_size,
                        "%s: %s\r\n", header_string, value);
 
     printf("written: %d\n", written);
 
     if ((written < 0)
-        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size + 1))) {
+        || (written >= (RESPONSE_BUFFER_SIZE - response_buffer_size))) {
         return 0;
     }
 
