@@ -288,43 +288,49 @@ int tcp_close(void){
 }
 
 
+
 int tcp_read(char *buf, int maxlen) {
 
     int delivered_bytes;
-             
+    
+    if (tcb.state != S_ESTABLISHED &&
+        tcb.state != S_FIN_WAIT_1 &&
+        tcb.state != S_FIN_WAIT_2 &&
+        tcb.state != S_CLOSING &&
+        tcb.state != S_CLOSE_WAIT &&
+        tcb.state != S_LAST_ACK ) {
+        
+        /* if not in one of these states, tcp_read is not willing to help */
+        return -1;
+    }
+    
     /*  if the buffer is empty, and a fin is received, return 0 */
     if ( tcb.rcvd_data_size == 0 && fin_received() ) {
         return 0;
     }
     
     /* if the buffer is empty, and the connection is closed, return ERROR */
-    if ( tcb.rcvd_data_size == 0 && tcb.state == CLOSED ) {
+    if ( tcb.rcvd_data_size == 0 && tcb.state == S_CLOSED ) {
         return -1;
     }
-    
-    
-    /*  if (tcb.state != S_ESTABLISHED
-        && tcb.state != S_FIN_WAIT_1
-        && tcb.state != S_FIN_WAIT_2) {
-        return -1;
-    }*/
-    
-    /* if we are in one of these states we try to receive data */
+
+    /* if we are in one of these states we haven't received a fin yet, */
+    /* so we try to receive new data */
     if (tcb.state == S_ESTABLISHED
         || tcb.state == S_FIN_WAIT_1
         || tcb.state == S_FIN_WAIT_2) {
-            
+        
+        /* returns immediately if PSH-flagged data in the buffer */
         receive_new_data(maxlen);
     }
     
-
-    if ( fin_received() ) {
-    
+    /* copy bytes to user buffer */
     delivered_bytes = deliver_received_bytes(buf, maxlen);
-
+    
     return delivered_bytes;
 
 }
+
 
 
 /* This method helps tcp_read to receive new data by calling do_packet() */

@@ -282,12 +282,12 @@ int serve(void) {
         return 0;
     }
 
-/*
+
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
     while (tcp_read(request_buffer, REQUEST_BUFFER_SIZE) > 0) {}
     alarm(0);
-*/
+
 
     return 1;
 
