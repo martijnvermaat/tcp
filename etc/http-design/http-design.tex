@@ -5,12 +5,14 @@
 \usepackage{latexsym}
 \usepackage[
     colorlinks,
-    pdftitle={Design Document HTTP client and server},
+    pdftitle={Design Documentation HTTP client and server},
     pdfsubject={HTTP client and server},
     pdfauthor={Laurens Bronwasser, Martijn Vermaat}
 ]{hyperref}
 
-\title{Design Document HTTP client and server}
+\pagestyle{headings}
+
+\title{Design Documentation HTTP client and server}
 \author{
     Laurens Bronwasser and Martijn Vermaat\\
     \{lmbronwa,mvermaat\}@cs.vu.nl
@@ -25,7 +27,7 @@
   numbers=none,
   basicstyle=\small,
   frame=tb,
-  language=C,
+  language=Pascal,
   captionpos=b
 }
 
@@ -33,36 +35,129 @@
 \section{General remarks}
 
 
+\subsection{HTTP messages}\label{sec:httpmessages}
+
+The HTTP/1.0 specification states that a full HTTP message consists of a
+message header, followed by a header/body separator, followed by a message
+body. The message body is ended by closing the connection. This has some
+implications for both HTTP clients and servers we will discuss below.
+
 
 \section{HTTP client}
 
 
+\subsection{General control flow}
+
+The general control flow in the HTTP client is described in psuedo-code in the
+following listing:
+
+\paragraph{}
+
+\begin{lstlisting}[title=HTTP client control flow]
+main(url):
+    ip, filename := parse_url(url)
+    connect(ip)
+    do_request(filename)
+    handle_response(filename)
+    close()
+
+handle_response(filename):
+    header = get_response_header()
+    if (status_ok(header)):
+        body = tcp_read()
+        write_to_file(filename, body)
+    else:
+        print_error()
+\end{lstlisting}
+
+
+\subsection{Retrieving the response message}
+
+\paragraph{Message header}
+
+Since the message header is always followed by a blank line separator, the
+HTTP client reads incomming data until it finds this separator. If it isn't
+find, we can take this as an error in the response message.
+
+\paragraph{Message body}
+
+The message body, however, is not followed by any kind of marker. When reading
+the message body, we know we have it complete if we reach the end of the
+incomming data stream. Therefore, we read the entire stream and have a
+complete message body if the end of the stream is reached.
+
+
 \section{HTTP server}
 
+The HTTP server is built around a single \lstinline|serve| method that can either
+be called once, or an infinite number of times in a loop. The \lstinline|serve|
+methods listens on a defined port for incomming connections and reads an HTTP
+request message when a connection is established. If the request message can
+be parsed correctly, the relevant response message will be constructed and
+sent to the client. After that, the connection will be closed and \lstinline|serve|
+will be called again, or the HTTP server will exit.
 
 
+\subsection{General control flow}
 
+In the listing below we describe the general control flow in the HTTP server:
 
-\begin{lstlisting}[title=Procedure tcp\_read]
-/*
-  *buf      Buffer to store data
-  maxlen    Maximum number of bytes to read
+\paragraph{}
 
-  Returns number of bytes read.
+\begin{lstlisting}[title=HTTP client control flow]
+main():
+    while true: serve()
 
-  This procedure is blocking.
-*/
+serve():
+    listen()
+    request := get_request()
+    filename := parse_request(request)
+    write_response(filename)
+    close()
 
-int tcp_read(char *buf, int maxlen) {
-
-    while ( buffer_empty() ) {
-        do_packet();
-    }
-
-    return copy_data(&buf, &maxlen);
-
-}
+write_response(filename):
+    write_headers()
+    write_body(filename)
 \end{lstlisting}
+
+The \lstinline|while| loop in the \lstinline|main| method of the server can
+also be one call to the \lstinline|serve| method, depending on a preprocessor
+instruction. Default is not to loop.
+
+
+\subsection{Sending the response message}
+
+As noted in subsection \ref{sec:httpmessages}, the message body will be
+considered completely sent if the connection is closed. Therefore, we should
+not explicitely close the connection if sending of the message body
+failed (a client might think everything went well, while the body was only
+partially transfered). Because we don't send the message header and body with
+separate write actions, we never close the connection if sending of data
+failed (although following the spec, it may be done if the message header was
+not sent).
+
+
+\subsection{Running as superuser}
+
+\paragraph{\lstinline|chroot|-ed environment}
+
+Running a process like a HTTP server with superuser priviliges is not
+recommended. If our server is executed with these priviliges, it will try to
+add extra safety by creating a \lstinline|chroot|-ed environment of the
+directory containing the documents to be served. Bugs in the filehandling code
+can therefore never lead to unforeseen exposure of private data outside this
+directory.
+
+\paragraph{The \lstinline|other| read bit}
+
+In addition, before opening a file requested for by a client, the server will
+check the read permissions of the file. If the \lstinline|other| read bit is
+not set, the server will not open the file and return a ``404 Not Found''
+response message.
+
+\section{Further reading}
+
+
 
 
 \end{document}
