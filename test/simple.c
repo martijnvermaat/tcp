@@ -8,7 +8,7 @@
 
 
 int main(void) {
-  /*char client_buf[10000];*/
+  char client_buf[10000];
   char server_buf[10000], *eth, *ip1, *ip2;
   
   ipaddr_t saddr;
@@ -26,7 +26,7 @@ int main(void) {
     return 1;
   }
 
-  /* alarm(15); */
+  alarm(15);
 
   if (fork()) {
     /* Client process running in $IP1 */
@@ -42,14 +42,14 @@ int main(void) {
     fflush(stdout); 
     if (tcp_write("foo",4)<0) return 1;
     fprintf(stdout,"Client write() done\n");
-    fflush(stdout);/*
+    fflush(stdout);
     if (tcp_read(client_buf,10000)<0) return 1;
     fprintf(stdout,"Client read() done\n");
     fflush(stdout);
     
     if (strcmp(client_buf,"foo")) return 1;
     fprintf(stdout,"Client response is correct\n");
-    fflush(stdout);*/
+    fflush(stdout);
     if (tcp_close()<0) return 1;
     fprintf(stdout,"Client close() done\n");
     fflush(stdout);
@@ -68,10 +68,10 @@ int main(void) {
     result = tcp_read(server_buf,16);
     fprintf(stdout,"Server read() done: %d\n",result);
     fflush(stdout);
-/*
+
     if (tcp_write(server_buf,strlen(server_buf)+1)<0) return 1;
     fprintf(stdout,"Server write() done\n");
-    fflush(stdout);*/
+    fflush(stdout);
     if (tcp_close()<0) return 1;
     fprintf(stdout,"Server close() done\n");
     fflush(stdout);

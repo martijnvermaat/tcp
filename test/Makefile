@@ -16,7 +16,7 @@ RANLIB = touch
 CFLAGS  = -DDEBUG -Wall -I/usr/local/include/cn -I../tcp -I../ip -O0
 LDFLAGS = -L../ip -L../tcp -L/usr/local/lib -ltcp -lip -lcn
 
-all: client server
+all: client server simple
 
 client: client.o
 	$(CC) $(CFLAGS) -o client client.o $(LDFLAGS)

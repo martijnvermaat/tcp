@@ -1,0 +1,28 @@
+#!/bin/sh
+
+# Setup environment variables
+export ETH=1
+export IP1=192.168.0.1  # client IP
+export IP2=192.168.0.2  # server IP
+
+OUTPUT=test_output
+
+
+echo "Starting automated tests" > $OUTPUT
+echo `date` >> $OUTPUT
+echo >> $OUTPUT
+
+echo "* Test compile.c" >> $OUTPUT
+./compile > /dev/null 2>> $OUTPUT
+echo >> $OUTPUT
+
+echo "* Test handshake.c" >> $OUTPUT
+./handshake 1>/dev/null 2>> $OUTPUT
+echo >> $OUTPUT
+
+echo "* Test basic.c" >> $OUTPUT
+./basic 1>/dev/null 2>> $OUTPUT
+echo >> $OUTPUT
+
+echo `date` >> $OUTPUT
+echo "Completed automated tests" >> $OUTPUT
