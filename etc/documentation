@@ -22,3 +22,5 @@ Let erop dat ip adres van afzender gelijk blijft tijdens connection.
 we assume data will not be fragmented in another way when it is resent.
 geef error als tcp_... methode wordt aangeroepen vanuit verkeerde state!
 Should tcp_write declare event E_PARTNER_DEAD?
+tcp_connect stopt na 1 keer al met zenden als ip_send mislukt.
+If the first syn contains an ack, we discard it.

@@ -288,13 +288,11 @@ int tcp_close(void){
 
 int tcp_read(char *buf, int maxlen) {
 
-    int bytes_to_read;
+    int bytes_to_read, length, bytes_free_at_end_of_buffer;
     int delivered_bytes;
     void (*oldsig)(int);
     //unsigned oldtimo;
 
-
-    /* print_buffer();*/
 
     if (tcb.state != S_ESTABLISHED
         && tcb.state != S_FIN_WAIT_1
@@ -324,7 +322,7 @@ int tcp_read(char *buf, int maxlen) {
     }
     
     if (alarm_went_off) {
-        /* reset alarm_went_of and call original alarm function */
+        /* reset alarm_went_off and call original alarm function */
         alarm_went_off = 0;
         oldsig(SIGALRM);
     }  else {
@@ -334,11 +332,14 @@ int tcp_read(char *buf, int maxlen) {
 
     delivered_bytes = min(maxlen, tcb.rcvd_data_size);
 
-    /* copy first chunck */
-    memcpy(buf, &tcb.rcv_data[tcb.rcvd_data_start], min(delivered_bytes, BUFFER_SIZE - tcb.rcvd_data_start));
+    /* copy first chunk out of circular buffer*/
+    bytes_free_at_end_of_buffer = BUFFER_SIZE - tcb.rcvd_data_start;
+    length = min(delivered_bytes, bytes_free_at_end_of_buffer);
+    memcpy(buf, &tcb.rcv_data[tcb.rcvd_data_start], length);
 
-    /* possibly copy second chunck if delivered data wraps in buffer */
+    /* possibly copy second chunk if delivered data wraps in buffer */
     if (delivered_bytes > BUFFER_SIZE - tcb.rcvd_data_start) {
+        
         memcpy(&buf[min(delivered_bytes, BUFFER_SIZE - tcb.rcvd_data_start)],
                tcb.rcv_data,
                delivered_bytes - (BUFFER_SIZE - tcb.rcvd_data_start));
@@ -368,7 +369,6 @@ int tcp_write(const char *buf, int len){
     }
 
     while (bytes_left) {
-        /*fprintf(stderr,"\n");*/
         data_sz = min(MAX_TCP_DATA, bytes_left);
 
         bytes_sent = send_data(buf_pointer, data_sz);
@@ -433,10 +433,7 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
     if (!(ACK_FLAG & flags)){
         return;
     }
-    /*
-     printf("\n%s: incoming ack: %lu \n",inet_ntoa(my_ipaddr),ack_nr);
-     printf("%s: expected ack: %lu\n", inet_ntoa(my_ipaddr),tcb.expected_ack);
-     fflush(stdout);*/
+
     if (ack_nr == tcb.expected_ack) {
 
         tcb.our_seq_nr = ack_nr;
@@ -557,19 +554,16 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
     if (!(SYN_FLAG & flags)){
         return;
     }
-    /*fprintf(stderr,"%s syn received\n",inet_ntoa(my_ipaddr)); 
-    fflush(stderr);*/
+
 
     if (tcb.state == S_LISTEN) {
-        tcb.their_ipaddr = their_ip;
-        /*printf(" from %s\n",inet_ntoa(their_ip));
-        fflush(stdout);*/
-        tcb.their_seq_nr = seq_nr + 1;
-        tcb.ack_nr = seq_nr + 1;
-    
-        declare_event(E_SYN_RECEIVED);
-        /* send_syn will be called by tcp_listen */
-
+        
+        if (!(ACK_FLAG & flags)) {
+            tcb.their_ipaddr = their_ip;
+            tcb.their_seq_nr = seq_nr + 1;
+            tcb.ack_nr = seq_nr + 1;
+            declare_event(E_SYN_RECEIVED);
+        }
 
     } else if (tcb.state == S_SYN_SENT) {
 
