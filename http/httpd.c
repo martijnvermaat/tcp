@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <ctype.h>
 #include <time.h>
 #include <signal.h>
 #include <errno.h>
@@ -72,7 +73,7 @@ int parse_url(char *url, char **filename, char **mimetype);
 int write_response(http_method method, char *url, char *protocol);
 int send_buffer(void);
 int handle_get(char *url);
-int file_name_character(char *c);
+int file_name_character(int c);
 int write_data(const char *data, int length);
 int write_status(http_status status);
 int write_error(http_status status);
@@ -252,7 +253,6 @@ int serve(void) {
     }
 
     if (!get_request()) {
-        /* todo: call tcp_read before close? (don't think so) */
         tcp_close();
         return 1;
     }
@@ -260,13 +260,21 @@ int serve(void) {
     if (parse_request(&method, &url, &protocol)) {
         if (!(write_response(method, url, protocol)
               && send_buffer())) {
-            tcp_close(); /* todo: is this good? */
+            /*
+              Don't call tcp_close in case of error,
+              because the client may think all data
+              was sent correctly because of that.
+            */
             return 1;
         }
     } else {
         if (!(write_error(STATUS_BAD_REQUEST)
               && send_buffer())) {
-            tcp_close(); /* todo: is this good? */
+            /*
+              Don't call tcp_close in case of error,
+              because the client may think all data
+              was sent correctly because of that.
+            */
             return 1;
         }
     }
@@ -503,7 +511,16 @@ int handle_get(char *url) {
 
     /* get file attributes */
     if (stat(filename, &file_stat)) {
-        return write_error(STATUS_INTERNAL_SERVER_ERROR);
+        switch (errno) {
+            case ENOENT:
+                return write_error(STATUS_NOT_FOUND);
+                break;
+            case EACCES:
+                return write_error(STATUS_FORBIDDEN);
+                break;
+            default:
+                return write_error(STATUS_INTERNAL_SERVER_ERROR);
+        }
     }
 
     /* check if file is directory */
@@ -533,7 +550,7 @@ int handle_get(char *url) {
 
     snprintf(filesize, FILESIZE_LENGTH, "%ld", (long) file_stat.st_size);
 
-    /* datetime format as in RFC 1123 */
+    /* datetime format as defined in RFC 1123 */
     /* if lastmodified is in the future, just send the current datetime */
     if (difftime(time(NULL), file_stat.st_mtime) < 0) {
         time(&curtime);
@@ -556,13 +573,22 @@ int handle_get(char *url) {
     /* read file contents */
     do {
         byte = getc(fp);
-        if (feof(fp)) break;
-    } while (write_data(&byte, 1));
+        if (ferror(fp)
+            || !write_data(&byte, 1)) {
+            break;
+        }
+    } while (!feof(fp));
 
     /* error occured during reading of file */
     if (ferror(fp)) {
         fclose(fp);
         return write_error(STATUS_INTERNAL_SERVER_ERROR);
+    }
+
+    /* error occured during sending of file */
+    if (!feof(fp)) {
+        fclose(fp);
+        return 0;
     }
 
     fclose(fp);
@@ -595,7 +621,7 @@ int parse_url(char *url, char **filename, char **mimetype) {
     if (!(*u)) return 0;
 
     /* read filename */
-    while (*u && file_name_character(u)) {
+    while (*u && file_name_character(*u)) {
         /* remember last . in filename */
         if (*u == '.') extension = u;
         u++;
@@ -638,10 +664,26 @@ int parse_url(char *url, char **filename, char **mimetype) {
 
 /* 1 if char is valid in filename, 0 otherwise */
 
-int file_name_character(char *c) {
+int file_name_character(int c) {
 
-    /* okay, maybe this is a bit too optimistic... */
-    return 1;
+    /*
+      We are being a bit conservative here with
+      the characters we accept in a filename.
+      It never hurts to handle data for a system
+      call (fopen) like a paranoid android.
+      For the moment, it takes too much time to
+      figure out exactly which characters are
+      valid in a filename on the current OS,
+      hope you don't mind...
+    */
+
+    return (isalnum(c)
+            || c == '.'
+            || c == ','
+            || c == '-'
+            || c == '_'
+            || c == '#'
+            || c == '+');
 
 }
 

@@ -4,7 +4,9 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <ctype.h>
 #include <time.h>
+#include <errno.h>
 #include <signal.h>
 #include "tcp.h"
 
@@ -30,6 +32,7 @@ int do_request(char *ip, char *filename);
 int handle_response(char *ip, char *filename);
 int get_response_header(void);
 int parse_url(char *url, char **ip, char **filename);
+int file_name_character(int c);
 int parse_status_line(char **status_line, int *status_ok);
 int parse_header(char **header, char **value);
 int read_separator(void);
@@ -81,7 +84,7 @@ int main(int argc, char** argv) {
 
     /* parse url into ip and filename */
     if (!parse_url(argv[1], &ip, &filename)) {
-        printf("Invalid url: %s\n", argv[1]);
+        printf("Invalid url\n");
         return 1;
     }
 
@@ -246,8 +249,15 @@ int handle_response(char *ip, char *filename) {
 
     /* open file for writing */
     if ((fp = fopen(filename, "w")) == (FILE *)0) {
-        printf("Could not open file for writing: %s\n", filename);
-        return 0;
+        switch (errno) {
+            case EACCES:
+                printf("No permissions to open file for writing: %s\n", filename);
+                return 0;
+                break;
+            default:
+                printf("Could not open file for writing: %s\n", filename);
+                return 0;
+        }
     }
 
     do {
@@ -407,7 +417,42 @@ int parse_url(char *url, char **ip, char **filename) {
         return 0;
     }
 
+    /* check for valid filename */
+    while (*p) {
+        if (!file_name_character(*p)) {
+            return 0;
+        }
+        p++;
+    }
+
+
     return 1;
+
+}
+
+
+/* 1 if char is valid in filename, 0 otherwise */
+
+int file_name_character(int c) {
+
+    /*
+      We are being a bit conservative here with
+      the characters we accept in a filename.
+      It never hurts to handle data for a system
+      call (fopen) like a paranoid android.
+      For the moment, it takes too much time to
+      figure out exactly which characters are
+      valid in a filename on the current OS,
+      hope you don't mind...
+    */
+
+    return (isalnum(c)
+            || c == '.'
+            || c == ','
+            || c == '-'
+            || c == '_'
+            || c == '#'
+            || c == '+');
 
 }
 
