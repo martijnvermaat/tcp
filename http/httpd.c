@@ -23,12 +23,14 @@
   Decide if we use 'size' or 'length' or 'len' (for ALL code).
   Also for 'chars' and 'bytes'. (Be consistent.)
 */
+#define KEEP_SERVING 0
 #define LISTEN_PORT 80
-#define UNPRIVILIGED_UID 9999 /* =nobody on minix, on linux 1000 is first normal user */
+#define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
 #define TIME_OUT 5
 #define MAX_REQUEST_LENGTH 512
-#define MAX_RESPONSE_LENGTH 6225
+#define MAX_RESPONSE_LENGTH 80000
 #define PROTOCOL "HTTP/1.0"
+#define VERSION "Tiny httpd.c / 0.1 (maybe on Minix)"
 
 typedef enum {
     METHOD_GET, METHOD_HEAD, METHOD_POST, METHOD_PUT,
@@ -44,7 +46,8 @@ typedef enum {
 } http_status;
 
 typedef enum {
-    HEADER_CONTENT_TYPE, HEADER_SERVER, HEADER_ISLAND
+    HEADER_CONTENT_TYPE, HEADER_SERVER, HEADER_ISLAND,
+    HEADER_CONTENT_LENGTH
 } http_header;
 
 
@@ -61,7 +64,6 @@ int write_status(char *buffer, http_status status);
 int write_error(char *buffer, http_status status);
 int write_standard_headers(char *buffer);
 int write_header(char *buffer, http_header header, char *value);
-int write_body(char *buffer);
 
 
 static void alarm_handler(int sig) {
@@ -142,11 +144,21 @@ int main(int argc, char** argv) {
         printf("Changed root and uid.\n");
     }
 
+
+#if KEEP_SERVING
+
+    /* keep calling serve() until it fails, then exit with error code */
     while (serve()) { }
-
     printf("Listening failed.\n");
-
     return 1;
+
+#else
+
+    /* call serve() and exit */
+    return (!serve());
+
+#endif
+
 
 }
 
@@ -324,6 +336,7 @@ int handle_get(char *buffer, char *url) {
     char *mimetype;
 
     FILE *fp;
+    char filesize[12];
     int byte;
 
     int length;
@@ -348,8 +361,17 @@ int handle_get(char *buffer, char *url) {
         return length;
     }
 
+    /* obtain file size */
+    /* this is not ideal code... maybe replace with stat() or so... */
+    fseek(fp, 0, SEEK_END);
+    filesize[sprintf(filesize, "%ld", ftell(fp))] = '\0';
+    rewind(fp);
+
+    /* todo: last-modified */
+
     length = write_status(buffer, STATUS_OK);
     length += write_header(buffer + length, HEADER_CONTENT_TYPE, mimetype);
+    length += write_header(buffer + length, HEADER_CONTENT_LENGTH, filesize);
     length += write_standard_headers(buffer + length);
 
     /* blank line between headers and body */
@@ -357,11 +379,47 @@ int handle_get(char *buffer, char *url) {
 
     /* write file contents to response buffer */
     while (
+        /* find out if getc is realy the thing to
+           do here (one alternative is fread) */
         ((byte = getc(fp)) != EOF)
         && (length < MAX_RESPONSE_LENGTH)
         ) {
         length += sprintf(buffer + length, "%c", byte);
     }
+
+    /* the following would allocate enough memory to read every
+       file of arbritary size:
+
+  FILE * pFile;
+  long lSize;
+  char * buffer;
+
+  pFile = fopen ( "myfile.txt" , "rb" );
+  if (pFile==NULL) exit (1);
+
+  // obtain file size.
+  fseek (pFile , 0 , SEEK_END);
+  lSize = ftell (pFile);
+  rewind (pFile);
+
+  // allocate memory to contain the whole file.
+  buffer = (char*) malloc (lSize);
+  if (buffer == NULL) exit (2);
+
+  // copy the file into the buffer.
+  fread (buffer,1,lSize,pFile);
+
+  // the whole file is loaded in the buffer.
+
+  // terminate
+  fclose (pFile);
+  free (buffer);
+  return 0;
+
+       maybe we can use something like this...
+    */
+
+    fclose(fp);
 
     /* check if we read entire file */
     if (byte != EOF) {
@@ -461,7 +519,7 @@ void send_response(char *buffer) {
     do {
         sent = tcp_write(buffer + total_sent, length - total_sent);
         total_sent += sent;
-    while (sent && total_sent < length) {
+    } while (sent && total_sent < length);
 
 }
 
@@ -474,7 +532,10 @@ int write_error(char *buffer, http_status status) {
 
     length = write_status(buffer, status);
     length += write_header(buffer + length, HEADER_CONTENT_TYPE, "text/plain");
-    length += write_standard_headers(buffer + length, status);
+    length += write_header(buffer + length, HEADER_CONTENT_LENGTH, "0");
+    length += write_standard_headers(buffer + length);
+
+    /* we could send some more info in an HTML body here... */
 
     return length;
 
@@ -537,7 +598,7 @@ int write_standard_headers(char *buffer) {
     int length;
 
     length = write_header(buffer, HEADER_ISLAND, "Goeree Overflakkee");
-    length += write_header(buffer + length, HEADER_SERVER, "Tiny httpd.c / 0.1 (maybe on Minix)");
+    length += write_header(buffer + length, HEADER_SERVER, VERSION);
 
     return length;
 
@@ -553,6 +614,9 @@ int write_header(char *buffer, http_header header, char *value) {
     switch (header) {
         case HEADER_CONTENT_TYPE:
             header_string = "Content-Type";
+            break;
+        case HEADER_CONTENT_LENGTH:
+            header_string = "Content-Length";
             break;
         case HEADER_SERVER:
             header_string = "Server";

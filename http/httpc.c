@@ -9,7 +9,7 @@
 
 #define SERVER_PORT 80
 #define TIME_OUT 5
-#define MAX_RESPONSE_LENGTH 1024
+#define RBUFFER_SIZE 1024
 
 
 /*
@@ -32,19 +32,19 @@ int main(void) {
 
     eth = getenv("ETH");
     if (!eth) {
-        fprintf(stderr, "The ETH environment variable must be set!\n");
+        fprintf(stdout, "The ETH environment variable must be set!\n");
         return 1;
     }
 
     ip1 = getenv("IP1");
     ip2 = getenv("IP2");
     if ((!ip1)||(!ip2)) {
-        fprintf(stderr, "The IP1 and IP2 environment variables must be set!\n");
+        fprintf(stdout, "The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
 
     if (tcp_socket() != 0) {
-        fprintf(stderr, "HTTPC: Opening socket failed\n");
+        fprintf(stdout, "HTTPC: Opening socket failed\n");
         return 1;
     }
 
@@ -55,7 +55,8 @@ int main(void) {
 
 int do_request(char *ip2) {
 
-    char response_buffer[MAX_RESPONSE_LENGTH];
+    char response_buffer[RBUFFER_SIZE+1];
+    int length;
 
     if (tcp_connect(inet_aton(ip2), SERVER_PORT) != 0) {
         return 1;
@@ -65,15 +66,18 @@ int do_request(char *ip2) {
         return 1;
     }
 
-    signal(SIGALRM, alarm_handler);
-    alarm(TIME_OUT);
-    if (tcp_read(response_buffer, MAX_RESPONSE_LENGTH) < 1) {
-        return 1;
-    }
-    alarm(0);
+    do {
+        signal(SIGALRM, alarm_handler);
+        alarm(TIME_OUT);
+        length = tcp_read(response_buffer, RBUFFER_SIZE);
+        if (length < 0) return 1;
+        alarm(0);
 
-    printf("*** Response: ***\n");
-    printf(response_buffer);
+        response_buffer[length] = '\0';
+        fprintf(stderr, response_buffer);
+    } while (length);
+
+    printf("*** Response was cool ***");
 
     if (tcp_close() != 0) {
         return 1;
@@ -81,7 +85,7 @@ int do_request(char *ip2) {
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    while (tcp_read(response_buffer, MAX_RESPONSE_LENGTH) > 0) {}
+    while (tcp_read(response_buffer, RBUFFER_SIZE) > 0) {}
     alarm(0);
 
     return 0;

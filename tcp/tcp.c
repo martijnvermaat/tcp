@@ -368,20 +368,20 @@ int tcp_write(const char *buf, int len){
     }
 
     while (bytes_left) {
-        /*fprintf(stderr,"\n");*/
+        /*fprintf(stdout,"\n");*/
         data_sz = min(MAX_TCP_DATA, bytes_left);
 
         bytes_sent = send_data(buf_pointer, data_sz);
-        /*fprintf(stderr,"%s: tcp_write: send_data() returned: data_sz:%d \n",inet_ntoa(my_ipaddr),bytes_sent);
-        fflush(stderr);*/
+        /*fprintf(stdout,"%s: tcp_write: send_data() returned: data_sz:%d \n",inet_ntoa(my_ipaddr),bytes_sent);
+        fflush(stdout);*/
         if (bytes_sent == -1) {break;}
         
         buf_pointer += bytes_sent;
         bytes_left -= bytes_sent;
         
     }
-    /*fprintf(stderr,"%s: tcp_write is going to stop: bytes_left:%d \n",inet_ntoa(my_ipaddr),bytes_left);
-    fflush(stderr);*/
+    /*fprintf(stdout,"%s: tcp_write is going to stop: bytes_left:%d \n",inet_ntoa(my_ipaddr),bytes_left);
+    fflush(stdout);*/
     if (bytes_left == len) {
         /* will also happen if len=0*/
         return -1;
@@ -561,8 +561,8 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
     if (!(SYN_FLAG & flags)){
         return;
     }
-    /*fprintf(stderr,"%s syn received\n",inet_ntoa(my_ipaddr)); 
-    fflush(stderr);*/
+    /*fprintf(stdout,"%s syn received\n",inet_ntoa(my_ipaddr)); 
+    fflush(stdout);*/
 
     if (get_state() == S_LISTEN) {
         tcb.their_ipaddr = their_ip;
@@ -638,8 +638,8 @@ int send_data(const char *buf, int len) {
     int bytes_sent = 0;
     char flags = PSH_FLAG | ACK_FLAG;
     int retransmission_allowed = MAX_RETRANSMISSION;
-    /*fprintf(stderr, "%s: send_data starts\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
+    /*fprintf(stdout, "%s: send_data starts\n",inet_ntoa(my_ipaddr));
+    fflush(stdout);*/
     printf("%s sending data\n",inet_ntoa(my_ipaddr));
     fflush(stdout);
     while (retransmission_allowed--) {
@@ -647,12 +647,12 @@ int send_data(const char *buf, int len) {
             tcb.their_port, tcb.our_seq_nr, tcb.ack_nr, flags, 1, buf, len);
 
         if(bytes_sent == -1){
-            fprintf(stderr,"no bytes sent");
-            fflush(stderr);
+            fprintf(stdout,"no bytes sent");
+            fflush(stdout);
             return -1;
         } else {
-            fprintf(stderr,"%s: %d bytes sent (seq %lu)\n", inet_ntoa(my_ipaddr), bytes_sent, tcb.our_seq_nr);
-            fflush(stderr);
+            fprintf(stdout,"%s: %d bytes sent (seq %lu)\n", inet_ntoa(my_ipaddr), bytes_sent, tcb.our_seq_nr);
+            fflush(stdout);
             tcb.expected_ack = tcb.our_seq_nr + bytes_sent;
             tcb.unacked_data_len = bytes_sent;
         }
@@ -822,8 +822,8 @@ void clear_tcb(void) {
 
 void tcp_alarm(int sig){
     alarm_went_of = 1;
-    fprintf(stderr,"%s: tcp_alarm went of\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);
+    fprintf(stdout,"%s: tcp_alarm went of\n",inet_ntoa(my_ipaddr));
+    fflush(stdout);
 }
 
 
@@ -980,8 +980,8 @@ int send_tcp_packet(ipaddr_t dst,
 	
     char segment[MAX_TCP_SEGMENT_LEN];
 
-    /*fprintf(stderr, "%s: send_tcp_packet starts:\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
+    /*fprintf(stdout, "%s: send_tcp_packet starts:\n",inet_ntoa(my_ipaddr));
+    fflush(stdout);*/
     hdr_sz = sizeof(tcp_hdr_t);
     tcp_sz = hdr_sz + data_sz;
     
@@ -1008,16 +1008,16 @@ int send_tcp_packet(ipaddr_t dst,
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
     if (tcp->checksum != 0) { 
-        fprintf(stderr,"%s: checksum error: 0x%x\n", inet_ntoa(my_ipaddr),tcp->checksum );
+        fprintf(stdout,"%s: checksum error: 0x%x\n", inet_ntoa(my_ipaddr),tcp->checksum );
     }
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
 
 
-    /*    fprintf(stderr, "%s: sending over ip: %d\n",inet_ntoa(my_ipaddr),tcp_sz);
-    fflush(stderr);*/
+    /*    fprintf(stdout, "%s: sending over ip: %d\n",inet_ntoa(my_ipaddr),tcp_sz);
+    fflush(stdout);*/
     bytes_sent = ip_send(dst,IP_PROTO_TCP, 2, tcp, tcp_sz );
-    /*fprintf(stderr, "%s: bytes sent: %d\n",inet_ntoa(my_ipaddr),bytes_sent);
-    fflush(stderr);*/
+    /*fprintf(stdout, "%s: bytes sent: %d\n",inet_ntoa(my_ipaddr),bytes_sent);
+    fflush(stdout);*/
     if (bytes_sent == -1) {
         return -1;
     } else {
@@ -1094,8 +1094,8 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
 
     /*assemble pseudoheader*/
     pseudo_hdr_t pseudo_hdr;
-    /*fprintf(stderr, "%s: tcp_checksum starts\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
+    /*fprintf(stdout, "%s: tcp_checksum starts\n",inet_ntoa(my_ipaddr));
+    fflush(stdout);*/
     pseudo_hdr.src = (src);
     pseudo_hdr.dst = (dst);
     pseudo_hdr.zero = 0;
@@ -1114,8 +1114,8 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
         }
     }
 
-    /*fprintf(stderr, "%s: checksum: peudo header calculated\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
+    /*fprintf(stdout, "%s: checksum: peudo header calculated\n",inet_ntoa(my_ipaddr));
+    fflush(stdout);*/
 
     /* add sum of one complements over segment */
     count = len >> 1;    
@@ -1127,8 +1127,8 @@ tcp_u16t tcp_checksum(ipaddr_t src, ipaddr_t dst, void *segment, int len) {
         }
     }
     
-    /*fprintf(stderr, "%s checksum: header + data calculated\n",inet_ntoa(my_ipaddr));
-    fflush(stderr);*/
+    /*fprintf(stdout, "%s checksum: header + data calculated\n",inet_ntoa(my_ipaddr));
+    fflush(stdout);*/
         
     
     /* possibly add the last byte */
