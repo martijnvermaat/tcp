@@ -35,7 +35,7 @@
 #include "tcp.h"
 
 
-#define KEEP_SERVING 1
+#define KEEP_SERVING 0
 #define LISTEN_PORT 80
 #define TIME_OUT 5
 #define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"  /* as in RFC 1123 */
