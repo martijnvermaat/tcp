@@ -18,12 +18,12 @@
 #define MAX_RETRANSMISSION 10
 #define BUFFER_SIZE 64000
 
-#define RTT 1   /* in seconds */
+#define RTT 1  /* in seconds */
 
 #define	IP_PROTO_TCP	6
 #define CLIENT_PORT     8042	
 
-typedef unsigned char tcp_u8t;   /* <- when doing arithmetic we should cast to int */
+typedef unsigned char tcp_u8t;
 typedef unsigned short tcp_u16t;
 typedef unsigned long tcp_u32t;
 

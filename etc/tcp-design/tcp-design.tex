@@ -3,12 +3,12 @@
 \usepackage[english]{babel}
 \usepackage{a4}
 \usepackage{latexsym}
-\usepackage[
-    colorlinks,
-    pdftitle={Design Documentation TCP Implementation},
-    pdfsubject={TCP implementation},
-    pdfauthor={Laurens Bronwasser, Martijn Vermaat}
-]{hyperref}
+%\usepackage[
+%    colorlinks,
+%    pdftitle={Design Documentation TCP Implementation},
+%    pdfsubject={TCP implementation},
+%    pdfauthor={Laurens Bronwasser, Martijn Vermaat}
+%]{hyperref}
 
 \pagestyle{headings}
 
@@ -34,15 +34,18 @@
 
 \section{High-level design}
 
+For the implementation for the TCP library, we decided to follow a three-tier
+design. The three tiers of our implementation are the following:
 
-The most important high-level design decision is that we choose to do a
-three-tier implementation. The three tiers in our TCP implementation are
-the connection-ori\"ented tier, the state tier, and the connection-less
-tier.
+\begin{enumerate}
+\item the connection-ori\"ented tier
+\item the state tier
+\item the connection-less tier
+\end{enumerate}
 
 The connection-ori\"ented tier provides a TCP interface to the application
 layer, whereas the connection-less tier deals only with sending and
-recieving TCP packets and works directly on the IP layer interface.
+receiving TCP packets and works directly on the IP layer interface.
 
 The middle layer in our implementation will be the state tier. This tier
 will have to bridge the gap between a connection-less environment and a
@@ -51,8 +54,143 @@ connection-ori\"ented environment, and therefore has to maintain a state.
 \paragraph{}
 
 Calling of procedures happens only within one tier, or from one tier to
-the tier directly beneeth it. This programming paradigm is illustrated by the 
-attached high-level design diagram.
+the tier directly beneeth it. This is good programming practice, as it makes
+debugging and reuse of code more feasable.
+
+
+\section{Provided functions}
+
+We will now discuss the functions provided by our TCP implementation, how they
+can be called, and what there semantics are. These functions are all declared in
+the \lstinline|tcp.h| header file.
+
+
+\subsection{\lstinline{tcp_socket}}
+
+Initializes TCP state.
+
+\begin{lstlisting}
+int tcp_socket(void);
+\end{lstlisting}
+
+\paragraph{Return value}
+
+Returns 0 on success, -1 on failure.
+
+\paragraph{Description}
+
+Before calling any other function provided by the TCP library,
+\lstinline|tcp_socket| must be called. If it is called at any later time, it
+will reset the TCP state and close any open connection.
+
+
+\subsection{\lstinline{tcp_connect}}
+
+Connects to a server.
+
+\begin{lstlisting}
+int tcp_connect(ipaddr_t dst, int port);
+\end{lstlisting}
+
+\paragraph{Return value}
+
+Returns 0 on success, -1 on failure.
+
+\paragraph{Description}
+
+This function tries to connect to a server on address \lstinline|dst| at port
+\lstinline|port|. When TCP is not in a closed state, \lstinline|tcp_connect|
+fails. If you want to make a new connection while not in a closed state, call
+\lstinline|tcp_socket| first.
+
+
+\subsection{\lstinline{tcp_listen}}
+
+Wait for an incomming connection to establish.
+
+\begin{lstlisting}
+int tcp_listen(int port, ipaddr_t *src);
+\end{lstlisting}
+
+\paragraph{Return value}
+
+Returns 0 on success, -1 on failure.
+
+\paragraph{Description}
+
+This is a blocking function. It listens on port \lstinline|port| for an
+incomming connection. Upon successful establising of the connection,
+\lstinline|tcp_listen| succeeds. When TCP is not in a closed state,
+\lstinline|tcp_listen| fails. If you want to listen for a new incomming
+connection while not in a closed state, call \lstinline|tcp_socket| first.
+
+
+\subsection{\lstinline{tcp_close}}
+
+Close active connection.
+
+\begin{lstlisting}
+int tcp_close(void);
+\end{lstlisting}
+
+\paragraph{Return value}
+
+Returns 0 on success, -1 on failure.
+
+\paragraph{Description}
+
+This function tries to close the active connection. It always succeeds, except
+when there is not active connection; then it fails.
+
+
+\subsection{\lstinline{tcp_write}}
+
+Write data to other side.
+
+\begin{lstlisting}
+int tcp_write(const char *buf, int len);
+\end{lstlisting}
+
+\paragraph{Return value}
+
+Returns the number of bytes written, or -1 on failure.
+
+\paragraph{Description}
+
+This function 
+
+
+\subsection{\lstinline{tcp_read}}
+
+Read data from other side.
+
+\begin{lstlisting}
+int tcp_read(char *buf, int maxlen);
+\end{lstlisting}
+
+\paragraph{Return value}
+
+Returns the number of bytes read, or -1 on failure.
+
+\paragraph{Description}
+
+This is a blocking function. It reads data from the other side, until
+\lstinline|maxlen| a maximum of bytes are read. The read data is copied to
+\lstinline|buf|. If the other side has closed the connection and there is no
+more data, \lstinline|tcp_read| returns 0.
+
+When there is no active connection, \lstinline|tcp_read| fails.
+
+
+\subsection{Some additional notes}
+
+\paragraph{Closing connections}
+
+Closing a connection in TCP has a special meaning. It does not just mean you
+will stop communicating, but 
+
+\paragraph{Signals}
+
 
 
 \section{Low-level design}
