@@ -34,10 +34,6 @@ typedef enum {
 } http_method;
 
 typedef enum {
-    PROTOCOL_HTTP10, PROTOCOL_HTTP11, PROTOCOL_UNKNOWN
-} http_protocol;
-
-typedef enum {
     STATUS_OK
 } http_status;
 
@@ -47,7 +43,7 @@ typedef enum {
 
 
 int serve(void);
-int parse_request(char *request, int request_length, http_method *method, char *url, http_protocol *protocol, char *headers);
+int parse_request(char *request, http_method *method, char **url);
 int read_token(char *buffer, int buffer_length, char *token);
 int count_spaces(char *buffer, int buffer_length);
 int response(void);
@@ -108,14 +104,12 @@ int main(int argc, char** argv) {
 
 int serve(void) {
 
-    char request_buffer[MAX_REQUEST_LENGTH];
+    char request_buffer[MAX_REQUEST_LENGTH + 1]; /* +1 because we NULL term it */
     int request_length;
     ipaddr_t saddr;
 
     http_method method;
-    http_protocol protocol;
     char *url;
-    char *headers;
 
     if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
         return 0;
@@ -130,10 +124,14 @@ int serve(void) {
         return 1;
     }
 
-    if (parse_request(request_buffer, request_length, &method, url, &protocol, headers)) {
+    /* NULL terminate request buffer */
+    request_buffer[request_length] = '\0';
+
+    if (parse_request(request_buffer, &method, &url)) {
         response();
     } else {
         /* 400 bad request (i think) */
+        printf("400 bad request!!!\n");
     }
 
     if (tcp_close() != 0) {
@@ -152,24 +150,74 @@ int serve(void) {
 
 /* 1 on success, 0 on failure */
 
-int parse_request(char *request, int request_length, http_method *method, char *url, http_protocol *protocol, char *headers) {
+int parse_request(char *request, http_method *method, char **url) {
 
-    char *protocol_string;
     char *method_string;
+    char *protocol_string;
 
-    int length = 0;
-    int i;
+    char *r = request;
 
-    if (count_spaces(request, request_length - length) > 0) {
+    /* read spaces */
+    while (*r && *r == ' ') r++;
+
+    /* start of method */
+    method_string = r;
+
+    /* read method */
+    while (*r && *r != ' ') r++;
+
+    /* check for space */
+    if (*r != ' ') return 0;
+
+    /* NULL terminate method */
+    *r = '\0';
+    r++;
+
+    /* read spaces */
+    while (*r && *r == ' ') r++;
+
+    /* start of url */
+    *url = r;
+
+    /* read url */
+    while (*r && *r != ' ') r++;
+
+    /* check for space */
+    if (*r != ' ') return 0;
+
+    /* NULL terminate url */
+    *r = '\0';
+    r++;
+
+    /* read spaces */
+    while (*r && *r == ' ') r++;
+
+    /* start of protocol */
+    protocol_string = r;
+
+    /* read protocol */
+    while (*r && *r != ' ' && *r != '\r') r++;
+
+    /* read line ending */
+    if (*r == '\r') {
+        /* \r\n directly following protocol */
+        *r = '\0';
+        r++;
+        if (*r != '\n') return 0;
+    } else  if (*r == ' ') {
+        /* spaces following protocol */
+        *r = '\0';
+        r++;
+        /* read spaces */
+        while (*r && *r == ' ') r++;
+        /* read \r\n */
+        if (*r != '\r' || *(++r) != '\n') return 0;
+    } else {
+        /* premature end of request */
         return 0;
     }
 
-    i = read_token(request + length, request_length - length, method_string);
-    if (i < 1) {
-        return 0;
-    }
-
-    /* use strcasecmp for case INsensitive matching... */
+    /* determine method */
     if (strcmp(method_string, "GET") == 0) {
         *method = METHOD_GET;
     } else if (strcmp(method_string, "POST") == 0) {
@@ -178,69 +226,10 @@ int parse_request(char *request, int request_length, http_method *method, char *
         *method = METHOD_UNKNOWN;
     }
 
-    if (count_spaces(request + length, request_length - length) != 1) {
-        return 0;
-    }
-    length += i + 1;
-
-    i = read_token(request + length, request_length - length, url);
-    if (i < 1) {
-        return 0;
-    }
-
-    if (count_spaces(request + length, request_length - length) != 1) {
-        return 0;
-    }
-    length += i + 1;
-
-    i = read_token(request + length, request_length - length, protocol_string);
-    if (i < 1) {
-        return 0;
-    }
-
-    if (strcmp(protocol_string, "HTTP/1.0") == 0) {
-        *protocol = PROTOCOL_HTTP10;
-    } else if (strcmp(protocol_string, "HTTP/1.1") == 0) {
-        *protocol = PROTOCOL_HTTP11;
-    } else {
-        *protocol = PROTOCOL_UNKNOWN;
-    }
-
-    length += i;
-
-    /* we should find a \r\n now */
+    /* check for HTTP 1.0 protocol */
+    if (strcmp(protocol_string, "HTTP/1.0") != 0) return 0;
 
     return 1;
-
-}
-
-
-/* length of token */
-
-int read_token(char *buffer, int buffer_length, char *token) {
-
-    int i;
-
-    for (i=0; (i < buffer_length) && (buffer[i] != ' ') && (buffer[i] != '\r'); i++) {}
-
-    /* the memcpy segfaults... */
-    memcpy(token, buffer, i);
-    token[i] = '\0';
-
-    return i;
-
-}
-
-
-/* number of spaces */
-
-int count_spaces(char *buffer, int buffer_length) {
-
-    int i;
-
-    for (i=0; (i < buffer_length) && (buffer[i] == ' '); i++) {}
-
-    return i;
 
 }
 

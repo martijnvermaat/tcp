@@ -61,7 +61,7 @@ int do_request(char *ip2) {
         return 1;
     }
 
-    if (tcp_write("GET /tisvu HTTP/1.0", 20) != 20) {
+    if (tcp_write("GET /tisvu HTTP/1.0\r\n", 21) != 21) {
         return 1;
     }
 
