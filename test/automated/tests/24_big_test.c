@@ -14,7 +14,6 @@
   sends 50 kilobyte
 */
 
-
 void print_bits(char c);
 
 static void alarm_handler(int sig) {

@@ -12,6 +12,7 @@ int main(void) {
   int i;
   len = 17;
   
+  
     error = tcp_socket();
     
     if (!error) {
