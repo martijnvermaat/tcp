@@ -190,12 +190,7 @@ int tcp_socket(void) {
     }
 
     if (!my_ipaddr){
-        /* todo: ip_init is hacking the user's alarm. What do we do?*/
-        oldsig = signal(SIGALRM, tcp_alarm);
-        old_timo = alarm(0);
         ip_init();
-        signal(SIGALRM, oldsig);
-        alarm(old_timo);
     }
     if (!my_ipaddr) {
         return -1;
