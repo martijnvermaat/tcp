@@ -462,7 +462,7 @@ int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
     }
 
     /*
-      A valid http request should contain the
+      A valid HTTP request should contain the
       body/header separator \r\n, but as we
       don't look for headers anyway, we are
       being nice here to lazy clients and won't
