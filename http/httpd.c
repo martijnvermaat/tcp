@@ -325,7 +325,7 @@ int parse_request(char *request, http_method *method, char **url, char **protoco
 int write_response(http_method method, char *url, char *protocol) {
 
     /* check for HTTP 1.0 protocol */
-    if (strcmp(protocol, "HTTP/1.0") != 0) {
+    if (strcmp(protocol, PROTOCOL) != 0) {
         return write_error(STATUS_HTTP_VERSION_NOT_SUPPORTED);
     }
 
@@ -537,7 +537,8 @@ int write_error(http_status status) {
             && write_general_headers()
             && write_header(HEADER_CONTENT_TYPE, "text/plain")
             && write_header(HEADER_CONTENT_LENGTH, "0")
-            && write_header(HEADER_LAST_MODIFIED, lastmodified));
+            && write_header(HEADER_LAST_MODIFIED, lastmodified)
+            && write_data("\r\n", 2));
 
 }
 

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <signal.h>
 #include "tcp.h"
 
@@ -28,6 +29,8 @@ int do_request(char *ip, char *filename);
 int handle_response(char *filename);
 int parse_url(char *url, char **ip, char **filename);
 int parse_status_line(char **status_line, int *status_ok);
+int parse_header(char **header, char **value);
+int read_separator(void);
 int add_to_buffer(void);
 
 
@@ -79,9 +82,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("filename: %s\n", filename);
-    printf("ip: %s\n", ip);
-
     /* connect to http server */
     if (tcp_connect(inet_aton(ip), SERVER_PORT)) {
         printf("Request failed: could not connect to server\n");
@@ -90,11 +90,13 @@ int main(int argc, char** argv) {
 
     /* do request */
     if (!do_request(ip, filename)) {
+        tcp_close();
         return 1;
     }
 
     /* handle response */
     if (!handle_response(filename)) {
+        tcp_close();
         return 1;
     }
 
@@ -157,7 +159,19 @@ int do_request(char *ip, char *filename) {
 int handle_response(char *filename) {
 
     char *status_line;
+    char *header;
+    char *value;
     int status_ok;
+
+    char *header_content_length = "Unknown";
+    char *header_content_type = "Unknown";
+    char *header_last_modified = "Unknown";
+
+    time_t curtime;
+#define TIME_LENGTH 32
+    char current_time[TIME_LENGTH];
+
+    FILE *fp;
 
     /* fill buffer with first part of response */
     if (!add_to_buffer()) {
@@ -178,8 +192,69 @@ int handle_response(char *filename) {
         return 0;
     }
 
-    printf("status: %s\n", status_line);
-    printf("is this ok? %d\n", status_ok);
+    /* read headers */
+    while (parse_header(&header, &value)) {
+        if (strcmp(header, "Content-Length") == 0) {
+            header_content_length = value;
+        } else if (strcmp(header, "Content-Type") == 0) {
+            header_content_type = value;
+        } else if (strcmp(header, "Last-Modified") == 0) {
+            header_last_modified = value;
+        }
+    }
+
+    if (!read_separator()) {
+        printf("Request failed: invalid response sent by server\n");
+        return 0;
+    }
+
+    /* get current time */
+    time(&curtime);
+    strftime(current_time, TIME_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
+
+    printf("return code was: %s\n", status_line);
+    printf("date of retreival: %s\n", current_time);
+    printf("document size: %s\n", header_content_length);
+    printf("mime type: %s\n", header_content_type);
+    printf("last modified at: %s\n", header_last_modified);
+
+    /* check for message body */
+    if (response_length <= response_pointer) {
+        printf("No message body present\n");
+        return 1;
+    }
+
+    /* open file for writing */
+    if ((fp = fopen(filename, "w")) == (FILE *)0) {
+        printf("Could not open file for writing: %s\n", filename);
+        return 0;
+    }
+
+    do {
+
+        /* write buffer contents to file */
+        while (response_pointer < response_length) {
+            putc(response_buffer[response_pointer], fp);
+            response_pointer++;
+        }
+
+        /* refill buffer if it was filled completely */
+        if (response_length == RESPONSE_BUFFER_SIZE) {
+            response_length = 0;
+            add_to_buffer();
+        } else {
+            response_length = 0;
+        }
+
+        response_pointer = 0;
+
+    } while (response_length);
+
+    fclose(fp);
+
+    printf("Wrote message body to file: %s\n", filename);
+
+    return 1;
 
 }
 
@@ -243,7 +318,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     char *protocol;
 
     /* read spaces */
-    while ((response_pointer < response_size)
+    while ((response_pointer < response_length)
            && (response_buffer[response_pointer] == ' ')) {
         response_pointer++;
     }
@@ -252,7 +327,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     protocol = response_buffer + response_pointer;
 
     /* read protocol */
-    while ((response_pointer < response_size)
+    while ((response_pointer < response_length)
            && (response_buffer[response_pointer] != ' ')) {
         response_pointer++;
     }
@@ -264,8 +339,13 @@ int parse_status_line(char **status_line, int *status_ok) {
     response_buffer[response_pointer] = '\0';
     response_pointer++;
 
+    /* check for HTTP 1.0 protocol */
+    if (strcmp(protocol, PROTOCOL) != 0) {
+        return 0;
+    }
+
     /* read spaces */
-    while ((response_pointer < response_size)
+    while ((response_pointer < response_length)
            && (response_buffer[response_pointer] == ' ')) {
         response_pointer++;
     }
@@ -274,7 +354,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     *status_line = response_buffer + response_pointer;
 
     /* read status number */
-    while ((response_pointer < response_size)
+    while ((response_pointer < response_length)
            && (response_buffer[response_pointer] != ' ')) {
         response_pointer++;
     }
@@ -297,7 +377,7 @@ int parse_status_line(char **status_line, int *status_ok) {
     response_pointer++;
 
     /* read status line */
-    while ((response_pointer < response_size)
+    while ((response_pointer < response_length)
            && (response_buffer[response_pointer] != '\r')) {
         response_pointer++;
     }
@@ -326,14 +406,114 @@ int parse_status_line(char **status_line, int *status_ok) {
 }
 
 
+/* 1 on succes, 0 on failure */
+
+int parse_header(char **header, char **value) {
+
+    /* read spaces */
+    while ((response_pointer < response_length)
+           && (response_buffer[response_pointer] == ' ')) {
+        response_pointer++;
+    }
+
+    /* check for end of buffer */
+    if (response_pointer >= response_length) {
+        return 0;
+    }
+
+    /* check for \r */
+    if (response_buffer[response_pointer] == '\r') {
+        return 0;
+    }
+
+    /* start of header name */
+    *header = response_buffer + response_pointer;
+
+    /* read header name */
+    while ((response_pointer < response_length)
+           && (response_buffer[response_pointer] != ':')) {
+        response_pointer++;
+    }
+
+    /* check for end of buffer */
+    if (response_pointer >= response_length) {
+        return 0;
+    }
+
+    /* end of header name */
+    response_buffer[response_pointer] = '\0';
+    response_pointer++;
+
+    /* read spaces */
+    while ((response_pointer < response_length)
+           && (response_buffer[response_pointer] == ' ')) {
+        response_pointer++;
+    }
+
+    /* start of header value */
+    *value = response_buffer + response_pointer;
+
+    /* read header value */
+    while ((response_pointer < response_length)
+           && (response_buffer[response_pointer] != '\r')) {
+        response_pointer++;
+    }
+
+    /* skip to '\n' */
+    response_pointer++;
+
+    /* check for end of buffer */
+    if (response_pointer >= response_length) {
+        return 0;
+    }
+
+    if (response_buffer[response_pointer] != '\n') {
+        return 0;
+    }
+
+    /* end of header value */
+    response_buffer[response_pointer-1] = '\0';
+    response_pointer++;
+
+    return 1;
+
+}
+
+
+/* 1 on succes, 0 on failure */
+
+int read_separator(void) {
+
+    /* check for end of buffer */
+    if ((response_pointer+1) >= response_length) {
+        return 0;
+    }
+
+    /* check for \r\n */
+    if ((response_buffer[response_pointer] != '\r')
+        && (response_buffer[response_pointer+1] != '\n')) {
+        return 0;
+    }
+
+    /* advance pointer to body */
+    response_pointer += 2;
+
+    return 1;
+
+}
+
+
 /* 1 on success, 0 on failure */
 
 int add_to_buffer(void) {
 
     int length = 0;
 
-    while ((response_length < RESPONSE_BUFFER_SIZE)
-           && (length >= 0)) {
+    if (response_length >= RESPONSE_BUFFER_SIZE) {
+        return 1;
+    }
+
+    do {
 
         /* fetch data */
         signal(SIGALRM, alarm_handler);
@@ -342,7 +522,12 @@ int add_to_buffer(void) {
                           RESPONSE_BUFFER_SIZE - response_length);
         alarm(0);
 
-    }
+        if (length > 0) {
+            response_length += length;
+        }
+
+    } while ((response_length < RESPONSE_BUFFER_SIZE)
+             && (length > 0));
 
     if (length < 0) {
         return 0;
