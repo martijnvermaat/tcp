@@ -1,4 +1,11 @@
 Design decision:
+    Wel een buffer dat groter is dan maximum payload per packet en ook
+    circulair is. Dit omdat er bijvoorbeeld tijdens een tcp_write wel steeds
+    data binnen kan komen wanneer we ack's lezen. Deze data kunnen we niet
+    direct doorgeven omdat we niet in tcp_read zitten, onafhankelijk van of er
+    een PSH flag aan zit of niet.
+
+Design decision:
     recv_tcp_packet retourneert na ieder ip packet dat binnenkomt. 
     Ook als de checksum verkeerd is, of het geen tcp segment is.
     Dit is om te voorkomen dat de timer in do_packet niet meer werkt. Als de 
