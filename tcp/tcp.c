@@ -382,8 +382,8 @@ void handle_ack(tcp_u8t flags, tcp_u32t ack_nr) {
     if (!(ACK_FLAG & flags)){
         return;
     }
-     printf("\n%s: incoming ack: %lx \n",inet_ntoa(my_ipaddr),ack_nr);
-     printf("%s: expected ack: %lx\n", inet_ntoa(my_ipaddr),tcb.expected_ack);
+     printf("\n%s: incoming ack: 0x%lx \n",inet_ntoa(my_ipaddr),ack_nr);
+     printf("%s: expected ack: 0x%lx\n", inet_ntoa(my_ipaddr),tcb.expected_ack);
      fflush(stdout);
     if (ack_nr == tcb.expected_ack) {
 
@@ -716,15 +716,20 @@ int send_ack(void) {
 
 
 int wait_for_ack(void){
+
+    void (*oldsig)(int);
+    unsigned oldtimo;
+
     alarm_went_of = 0;
-    signal(SIGALRM, tcp_alarm);
-    alarm(RTT);
+    oldsig = signal(SIGALRM, tcp_alarm);
+    oldtimo = alarm(RTT);
     
     while (alarm_went_of == 0 && !all_acks_received()) {
         do_packet();
     }
-    
-    alarm(0);
+
+    signal(SIGALRM, oldsig);    
+    alarm(oldtimo);
     alarm_went_of = 0;
     
     return all_acks_received();
@@ -895,7 +900,8 @@ int send_tcp_packet(ipaddr_t dst,
     int bytes_sent;
     tcp_u32t tcp_sz, hdr_sz;
     tcp_hdr_t *tcp;
-    
+    int checksum;
+	
     char segment[MAX_TCP_SEGMENT_LEN];
 
 
@@ -933,7 +939,8 @@ int send_tcp_packet(ipaddr_t dst,
 
 
     tcp->checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
-        
+    checksum = tcp_checksum(my_ipaddr, dst, tcp, tcp_sz);
+    fprintf(stderr,"%s: checksum: %d\n", inet_ntoa(my_ipaddr),checksum );    
     bytes_sent = ip_send(dst,IP_PROTO_TCP, 2, tcp, tcp_sz );
     if (bytes_sent == -1){
         return -1;
