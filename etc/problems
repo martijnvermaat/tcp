@@ -10,3 +10,4 @@ checksum controleren bij bitpattern groter dan 127 (let op 131)
 free() na aanroepen ip_receive en ip_send()
 options testen
 gebruik signal en alarm in testprogrammaatjes
+
