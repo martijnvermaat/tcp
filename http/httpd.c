@@ -39,6 +39,7 @@
 #define UNPRIVILIGED_GID 99 /* group nobody on minix is 99 */
 #define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
 #define TIME_OUT 5
+#define DATE_TIME_FORMAT "%a, %d %b %Y %H:%M:%S GMT"
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpd.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
@@ -49,6 +50,7 @@
 #define URL_LENGTH 255
 #define PROTOCOL_LENGTH 10
 #define MIME_TYPE_LENGTH 50
+#define HEADER_LINE_LENGTH 200
 
 
 typedef enum {
@@ -527,11 +529,8 @@ int handle_get(char *url) {
     FILE *fp;
     struct stat file_stat;
 
-#define FILESIZE_LENGTH 12
-#define LASTMODIFIED_LENGTH 32
-
-    char filesize[FILESIZE_LENGTH];
-    char lastmodified[LASTMODIFIED_LENGTH];
+    char filesize[HEADER_LINE_LENGTH];
+    char lastmodified[HEADER_LINE_LENGTH];
     time_t curtime;
 
     char byte;
@@ -581,15 +580,15 @@ int handle_get(char *url) {
         }
     }
 
-    snprintf(filesize, FILESIZE_LENGTH, "%ld", (long) file_stat.st_size);
+    snprintf(filesize, HEADER_LINE_LENGTH, "%ld", (long) file_stat.st_size);
 
     /* datetime format as defined in RFC 1123 */
     /* if lastmodified is in the future, just send the current datetime */
     if (difftime(time(NULL), file_stat.st_mtime) < 0) {
         time(&curtime);
-        strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
+        strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
     } else {
-        strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&file_stat.st_mtime));
+        strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&file_stat.st_mtime));
     }
 
     /* write header and header/body seperator */
@@ -739,8 +738,7 @@ int file_name_character(int c) {
 
 int write_error(http_status status) {
 
-#define LASTMODIFIED_LENGTH 32
-    char lastmodified[LASTMODIFIED_LENGTH];
+    char lastmodified[HEADER_LINE_LENGTH];
     time_t curtime;
 
     /* we could send some more info in an HTML body here... */
@@ -751,7 +749,7 @@ int write_error(http_status status) {
 
     /* send current time as lastmodified */
     time(&curtime);
-    strftime(lastmodified, LASTMODIFIED_LENGTH, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&curtime));
+    strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
 
     return (write_status(status)
             && write_general_headers()
@@ -767,8 +765,7 @@ int write_error(http_status status) {
 
 int write_status(http_status status) {
 
-#define STATUS_LINE_LENGTH 40
-    char status_line[STATUS_LINE_LENGTH];
+    char status_line[HEADER_LINE_LENGTH];
     char *status_string;
     int status_code;
     int written;
@@ -808,10 +805,10 @@ int write_status(http_status status) {
     }
 
     /* format status line */
-    written = snprintf(status_line, STATUS_LINE_LENGTH, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
+    written = snprintf(status_line, HEADER_LINE_LENGTH, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
 
-    if (written >= STATUS_LINE_LENGTH) {
-        written = STATUS_LINE_LENGTH -1;
+    if (written >= HEADER_LINE_LENGTH) {
+        written = HEADER_LINE_LENGTH -1;
     }
 
     return write_data(status_line, written);
@@ -823,9 +820,13 @@ int write_status(http_status status) {
 
 int write_general_headers(void) {
 
-    /* todo: write current date */
+    char date_value[HEADER_LINE_LENGTH];
+    time_t curtime;
 
-    return (write_header(HEADER_DATE, "vandaag is het zo laat")
+    time(&curtime);
+    strftime(date_value, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
+
+    return (write_header(HEADER_DATE, date_value)
             && write_header(HEADER_SERVER, VERSION));
 
 }
@@ -835,7 +836,6 @@ int write_general_headers(void) {
 
 int write_header(http_header header, char *value) {
 
-#define HEADER_LINE_LENGTH 60
     char header_line[HEADER_LINE_LENGTH];
     char *header_string;
     int written;
@@ -912,12 +912,9 @@ int write_data(const char *data, int length) {
 
 int send_buffer() {
 
-    int sent = 0;
-
-    printf("sending buffer: %d bytes\n", response_buffer_size);
+    int sent;
 
     sent = tcp_write(response_buffer, response_buffer_size);
-    printf(" wrote %d of buffer\n", sent);
 
     /* sending data failed */
     if (sent != response_buffer_size) return 0;
