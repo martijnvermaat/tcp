@@ -99,20 +99,43 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    /* if we are superuser, chroot and change effective uid and guid */
+    /* if we are superuser, chroot and change effective uid */
     /* do this after opening tcp socket, because we need access to /dev/eth */
     if (geteuid() == 0) {
         if (chroot(argv[1]) < 0) {
             printf("Could not chroot to www directory.\n");
             return 1;
         }
-        /* this must be seteuid() actually on linux, add a preprocessor
-           conditional for this... */
+        /*
+           this must be seteuid() actually on linux, add a preprocessor
+           conditional for this...
+           Also, we should call setgid (setegid on linux) too.
+           Think about the value of UNPRIVILIGED_UID:
+           On minix, nobody is 9999 (gr 99), first user is 10 (gr 3)
+           On linux, nobody is 65534 (gr 65533), first user is 1000 (gr 100)
+           Some sources say a uid of -2 wraps to 65534 on linux, so being
+           effectively user nobody. Check if this really works, and what it
+           does on minix. Also think about what to do with the guid in this
+           case...
+           If we can't sort this out, the alternative is using stat() when
+           opening files to check if it is o+r.
+
+           By the way, maybe check this piece of code again, it would be
+           the ideal solution (only I can't get it to work):
+
+           struct passwd *nobody;
+           if (((nobody = getpwnam("nobody")) == NULL) ||
+               setegid(nobody->pw_gid) ||
+               seteuid(nobody->pw_uid)) {
+               printf("can't change to user nobody.\n");
+               exit (1);
+           }
+        */
         if (setuid(UNPRIVILIGED_UID)) {
             printf("Could not change to user `nobody'.\n");
             return 1;
         }
-        printf("Changed root, uid, and guid.\n");
+        printf("Changed root and uid.\n");
     }
 
     while (serve()) { }
