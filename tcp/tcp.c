@@ -184,8 +184,8 @@ int tcp_socket(void) {
       Todo: this should initialize tcb and do
       nothing if called again
     */
-    void (*oldsig)(int);
-    unsigned old_timo;
+    //void (*oldsig)(int);
+    //unsigned old_timo;
 
     if (tcb.state != S_START) {
         return -1;
@@ -232,7 +232,7 @@ int tcp_connect(ipaddr_t dst, int port) {
 
 int tcp_listen(int port, ipaddr_t *src) {
     void (*oldsig)(int);
-    unsigned oldtimo;
+    //unsigned oldtimo;
     
     if (tcb.state != S_CLOSED) {
         return -1;
@@ -291,7 +291,7 @@ int tcp_read(char *buf, int maxlen) {
     int bytes_to_read;
     int delivered_bytes;
     void (*oldsig)(int);
-    unsigned oldtimo;
+    //unsigned oldtimo;
 
 
     /* print_buffer();*/
