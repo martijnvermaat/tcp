@@ -181,13 +181,6 @@ int handle_response(char *ip, char *filename) {
         return 0;
     }
 
-/*
-    if (!add_to_buffer()) {
-        printf("Request failed: could not retrieve response from server\n");
-        return 0;
-    }
-*/
-
     /*
       Be carefull to not use the buffer contents after they have been
       overwritten. We assume the entire header fits in the buffer at
@@ -233,13 +226,6 @@ int handle_response(char *ip, char *filename) {
         return 1;
     }
 
-    /* check for message body */
-/*
-    if (response_buffer_size <= response_pointer) {
-        printf("No message body was present\n");
-        return 1;
-    }
-*/
 
     /* refill buffer if there's nothing left */
 /*
