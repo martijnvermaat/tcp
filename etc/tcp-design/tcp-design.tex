@@ -261,15 +261,17 @@ First, we will give an overview of the most important decisions that we made.
     acknowledge each packet instantly.
 
 \paragraph{Connection establishment}
-    After the first \lstinline|syn| is sent, the state transits to \lstinline|SYN_SENT| 
+    After the first \lstinline|syn| is sent, 
+    the state transits to \lstinline|SYN_SENT| 
     and we wait for the \lstinline|syn+ack| response. In this state, only 
     \lstinline|syn+ack| packets will be accepted. If a packet arrives that carries an
-    acknowledgement, but no \lstinline|syn|,...
-    Als er een packet binnenkomt met een ack, maar zonder syn, dan
-    negeren we dit packet. De SYN, waar we  op wachten, moet toch de
-    verplichte ACK bevatten. Als het syn+ack packet niet binnen 1 seconde
-    arriveert, dan gaat de state naar CLOSED, daarna wordt de syn opnieuw
-    verstuurt. De state gaat dan weer terug naar \lstinline|SYN_SENT|.
+    acknowledgement, but no \lstinline|syn|, this packet will be rejected.
+    Also, a packet with a \lstinline|syn| must contain an ack. 
+    If a \lstinline|syn+ack| does not arrive within the specified 
+    \lstinline|round trip transmition time| the state will be altered to 
+    \lstinline|CLOSED|. Thereafter the \lstinline|syn| is automatically 
+    resend, which causes the state to go to \lstinline|SYN_SENT| again.
+    
     
 \paragraph{State transitions}
     The \lstinline|declare_event()| procedure performs all necessary state 
@@ -301,7 +303,15 @@ First, we will give an overview of the most important decisions that we made.
     
     
 \paragraph{Wrapping sequence numbers}
-    The sequence number 
+    The sequence number and ack numbers have to be wrapped after hitting the 
+    highest value that can be represented with 32 bits. This wrapping occurs 
+    automatically if unsigned 32 bit variables are used. The issue is that 
+    this implementation will only work when \lstinline|unsigned long| is 
+    exactly 32 bits long.
+    
+    Of course, we still have to be aware of wrapping sequence numbers when we do
+    comparisons involving sequence numbers or acknowledgement numbers.
+    
     
 \subsubsection{State-tier Pseudocode}
 
