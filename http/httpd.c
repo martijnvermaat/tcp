@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <pwd.h>
+#include <stdarg.h>
 #include "tcp.h"
 
 
@@ -34,7 +35,9 @@
 */
 #define KEEP_SERVING 0
 #define LISTEN_PORT 80
+#define UNPRIVILIGED_GID 99 /* group nobody on minix is 99 */
 #define UNPRIVILIGED_UID 9999 /* 9999=nobody on minix, on linux 1000 is first normal user */
+#define MAX_PATH_LENGTH 100
 #define TIME_OUT 5
 #define REQUEST_BUFFER_SIZE 512 /* request header should fit */
 #define RESPONSE_BUFFER_SIZE 80000
@@ -62,6 +65,7 @@ typedef enum {
 
 
 int serve(void);
+int make_absolute_path(char *path, char *absolute);
 int parse_request(char *request, http_method *method, char **url, char **protocol);
 int parse_url(char *url, char **filename, char **mimetype);
 int write_response(http_method method, char *url, char *protocol);
@@ -91,15 +95,11 @@ static void alarm_handler(int sig) {
 
 int main(int argc, char** argv) {
 
+    char *absolute_path;
     char *eth, *ip1, *ip2;
 
     if (argc < 2) {
         printf("No www directory found\nUsage: %s wwwdir\n", argv[0]);
-        return 1;
-    }
-
-    if (chdir(argv[1]) < 0) {
-        printf("Could not change dir to '%s'\n", argv[1]);
         return 1;
     }
 
@@ -124,7 +124,11 @@ int main(int argc, char** argv) {
     /* if we are superuser, chroot and change effective uid */
     /* do this after opening tcp socket, because we need access to /dev/eth */
     if (geteuid() == 0) {
-        if (chroot(argv[1]) < 0) {
+        /* we could chroot here for safety, only it doesn't accept
+           relative paths, so we won't bother for now... */
+        if (!make_absolute_path(argv[1], absolute_path)
+            || (chroot(argv[1]) < 0)
+            || (chdir("/") < 0)) {
             printf("Could not chroot to www directory\n");
             return 1;
         }
@@ -153,11 +157,23 @@ int main(int argc, char** argv) {
                exit (1);
            }
         */
-        if (setuid(UNPRIVILIGED_UID)) {
+
+        /* this code doesn't seem to work on minix, we check
+           file permissions with stat() instead */
+        /*
+        if (setegid(UNPRIVILIGED_GID) || seteuid(UNPRIVILIGED_UID)) {
             printf("Could not change to user `nobody'\n");
             return 1;
         }
-        printf("Changed root and uid\n");
+        */
+        /*printf("Changed root and uid\n");*/
+    } else {
+        /* are not root, so instead of chroot do chdir */
+        /* chdir does not need an absolute dirname */
+        if (chdir(argv[1]) < 0) {
+            printf("Could not change dir to '%s'\n", argv[1]);
+            return 1;
+        }
     }
 
 
@@ -175,6 +191,41 @@ int main(int argc, char** argv) {
 
 #endif
 
+
+}
+
+
+/* 1 on success, 0 on failure */
+
+int make_absolute_path(char *path, char *absolute) {
+
+    char absolute_path[MAX_PATH_LENGTH];
+    int length;
+
+    /* check if path is already absolute */
+    if (*path == '/') {
+        absolute = path;
+        return 1;
+    }
+
+    /* get current working dir */
+    if (getcwd(absolute_path, MAX_PATH_LENGTH) == NULL) {
+        return 0;
+    }
+
+    /* copy path after current working dir */
+    length = snprintf(absolute_path + strlen(absolute_path),
+                      MAX_PATH_LENGTH,
+                      "/%s", path);
+
+    /* check if path was too long */
+    if (length >= MAX_PATH_LENGTH) {
+        return 0;
+    }
+
+    absolute = absolute_path;
+
+    return 1;
 
 }
 
@@ -206,6 +257,7 @@ int serve(void) {
     alarm(0);
 
     if ((request_length < 1) || alarm_went_off) {
+        tcp_close(); /* is this good? */
         return 1;
     }
 
@@ -215,11 +267,13 @@ int serve(void) {
     if (parse_request(request_buffer, &method, &url, &protocol)) {
         if (!(write_response(method, url, protocol)
               && send_buffer())) {
+            tcp_close(); /* todo: is this good? */
             return 1;
         }
     } else {
         if (!(write_error(STATUS_BAD_REQUEST)
               && send_buffer())) {
+            tcp_close(); /* todo: is this good? */
             return 1;
         }
     }
@@ -375,6 +429,21 @@ int handle_get(char *url) {
         return write_error(STATUS_BAD_REQUEST);
     }
 
+    /* get file attributes */
+    if (stat(filename, &file_stat)) {
+        return write_error(STATUS_INTERNAL_SERVER_ERROR);
+    }
+
+    /* check if file is directory */
+    if (file_stat.st_mode & S_IFDIR) {
+        return write_error(STATUS_FORBIDDEN);
+    }
+
+    /* check if file is o+r (remove this code if seteuid() is used) */
+    if (!(file_stat.st_mode & S_IROTH)) {
+        return write_error(STATUS_FORBIDDEN);
+    }
+
     /* open file */
     if ((fp = fopen(filename, "r")) == (FILE *)0) {
         /* could not open file */
@@ -388,11 +457,6 @@ int handle_get(char *url) {
             default:
                 return write_error(STATUS_INTERNAL_SERVER_ERROR);
         }
-    }
-
-    /* get file attributes */
-    if (stat(filename, &file_stat)) {
-        return write_error(STATUS_INTERNAL_SERVER_ERROR);
     }
 
     snprintf(filesize, FILESIZE_LENGTH, "%ld", (long) file_stat.st_size);
@@ -663,15 +727,6 @@ int write_data(const char *data, int length) {
             if (!send_buffer()) return 0;
         }
 
-        /*
-          we could do a check here if length-written means a full buffer;
-          in that case, don't copy it to the buffer, but send it right
-          away. this would prevent copying enormous amounts of data when
-          sending big files.
-          we should really implement this, it should improve efficiency
-          a lot.
-        */
-
         /* determine number of bytes to write */
         if ((length - written) > (RESPONSE_BUFFER_SIZE - response_buffer_size)) {
             write = RESPONSE_BUFFER_SIZE - response_buffer_size;
@@ -698,18 +753,14 @@ int write_data(const char *data, int length) {
 int send_buffer() {
 
     int sent = 0;
-    int total_sent = 0;
 
     printf("sending buffer: %d bytes\n", response_buffer_size);
 
-    do {
-        sent = tcp_write(response_buffer + total_sent, response_buffer_size - total_sent);
-        printf(" wrote %d of buffer\n", sent);
-        total_sent += sent;
-    } while ((sent > 0) && total_sent < response_buffer_size);
+    sent = tcp_write(response_buffer, response_buffer_size);
+    printf(" wrote %d of buffer\n", sent);
 
     /* sending data failed */
-    if (sent <= 0) return 0;
+    if (sent != response_buffer_size) return 0;
 
     response_buffer_size = 0;
 

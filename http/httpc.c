@@ -21,7 +21,7 @@
 #define SERVER_PORT 80
 #define TIME_OUT 10
 #define REQUEST_BUFFER_SIZE 512 /* request should fit */
-#define RESPONSE_BUFFER_SIZE 9024 /* response header should always fit */
+#define RESPONSE_BUFFER_SIZE 1024 /* response header should always fit */
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpc.c/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
@@ -43,7 +43,6 @@ static int alarm_went_off = 0;
 
 static void alarm_handler(int sig) {
     /* just return to interrupt */
-    printf("httpc alarm went off\n");
     alarm_went_off = 1;
 }
 
@@ -128,7 +127,6 @@ int do_request(char *ip, char *filename) {
     int request_length;
 
     int sent = 0;
-    int total_sent = 0;
 
     /* create request */
     request_length = snprintf(request_buffer,
@@ -143,13 +141,10 @@ int do_request(char *ip, char *filename) {
     }
 
     /* send request */
-    do {
-        sent = tcp_write(request_buffer + total_sent, request_length - total_sent);
-        total_sent += sent;
-    } while ((sent > 0) && total_sent < request_length);
+    sent = tcp_write(request_buffer, request_length);
 
     /* sending data failed */
-    if (sent <= 0) {
+    if (sent != request_length) {
         printf("Request failed: could not send request to server\n");
         return 0;
     }
@@ -261,7 +256,7 @@ int handle_response(char *ip, char *filename) {
           tcp_read which might fail and we assume we
           miss part of the data. how to solve this?
         */
-        if (response_length == RESPONSE_BUFFER_SIZE) {
+        /*if (response_length == RESPONSE_BUFFER_SIZE) {*/
             response_length = 0;
             if (!add_to_buffer()) {
                 /*
@@ -278,9 +273,9 @@ int handle_response(char *ip, char *filename) {
                 printf("Wrote partial message body to file: %s\n", filename);
                 return 0;
             }
-        } else {
+/*        } else {
             response_length = 0;
-        }
+        }*/
 
         response_pointer = 0;
 
@@ -546,8 +541,8 @@ int add_to_buffer(void) {
 
     int length = 0;
 
-    printf("add to buffer (ask %d bytes)\n", RESPONSE_BUFFER_SIZE - response_length);
-
+/*    printf("add to buffer (ask %d bytes)\n", RESPONSE_BUFFER_SIZE - response_length);
+*/
     if (response_length >= RESPONSE_BUFFER_SIZE) {
         return 1;
     }
@@ -558,7 +553,8 @@ int add_to_buffer(void) {
                       RESPONSE_BUFFER_SIZE - response_length);
     alarm(0);
 
-    printf("stored %d bytes\n", length);
+/*    printf("stored %d bytes\n", length);
+*/
 
     if ((length < 0) || alarm_went_off) {
         return 0;
