@@ -42,13 +42,13 @@
 #define PROTOCOL "HTTP/1.0"
 #define VERSION "Tiny httpd/1.0 ({lmbronwa,mvermaat}@cs.vu.nl)"
 
-#define REQUEST_BUFFER_SIZE 512  /* full request header should fit */
+#define REQUEST_BUFFER_SIZE 512      /* full request header should fit */
 #define RESPONSE_BUFFER_SIZE 80000
 #define MAX_PATH_LENGTH 255
 #define URL_LENGTH 255
 #define PROTOCOL_LENGTH 10
 #define MIME_TYPE_LENGTH 50
-#define HEADER_LINE_LENGTH 200  /* used for a lot of small temporary buffers */
+#define HEADER_LINE_LENGTH 200       /* used for some small temporary buffers */
 #define HTML_ERROR_LENGTH 300
 
 #define HTML_ERROR "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\
@@ -75,11 +75,13 @@ typedef enum {
 } http_header;
 
 
-int serve(void);
+int serve(char *path);
 int make_absolute_path(char *path, char *absolute, int max_length);
 int get_request(char *buffer, int max_length);
-int parse_request(char *buffer, int buffer_length, http_method *method, char *url, int url_length, char *protocol, int protocol_length);
-int parse_url(char *url, char *filename, int filename_length, char *mimetype, int mimetype_length);
+int parse_request(char *buffer, int buffer_length, http_method *method, char *url,
+                  int url_length, char *protocol, int protocol_length);
+int parse_url(char *url, char *filename, int filename_length, char *mimetype,
+              int mimetype_length);
 int write_response(http_method method, char *url, char *protocol);
 int send_buffer(void);
 int handle_get(char *url);
@@ -97,17 +99,16 @@ static int alarm_went_off = 0;
 
 
 static void alarm_handler(int sig) {
-    /* just return to interrupt */
-    printf("httpd alarm went off\n");
     alarm_went_off = 1;
 }
 
 
-/* 1 on failure, no return or 0 on success */
+/*
+  Returns: 1 on failure, no return or 0 on success
+*/
 
 int main(int argc, char** argv) {
 
-    char absolute_path[MAX_PATH_LENGTH];
     char *eth, *ip1, *ip2;
 
     if (argc < 2) {
@@ -128,48 +129,118 @@ int main(int argc, char** argv) {
 
     ip1 = getenv("IP1");
     ip2 = getenv("IP2");
-    if ((!ip1)||(!ip2)) {
+    if (!ip1 || !ip2) {
         printf("The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
 
-    /* todo: call tcp_socket for each connection */
-    if (tcp_socket() != 0) {
-        printf("HTTPD: Opening socket failed\n");
-        return 1;
-    }
-
-    /* if we are superuser, we can chroot for safety */
-    if (geteuid() == 0) {
-        /* chroot doesn't accept relative paths */
-        if (!make_absolute_path(argv[1], absolute_path, MAX_PATH_LENGTH)
-            || (chroot(absolute_path) < 0)
-            || (chdir("/") < 0)) {
-            printf("Could not chroot to www directory\n");
-            return 1;
-        }
-    }
-
-
 #if KEEP_SERVING
-
     /* keep calling serve() until it fails, then exit with error code */
-    while (serve()) { }
+    while (serve(argv[1])) { }
     printf("Listening failed\n");
     return 1;
-
 #else
-
     /* call serve() and exit */
-    return (!serve());
-
+    return (!serve(argv[1]));
 #endif
-
 
 }
 
 
-/* absolute path of file with current working dir */
+/*
+  Listen on LISTEN_PORT and serve clients
+  Returns: 1 on success, 0 on failure
+*/
+
+int serve(char *path) {
+
+    char absolute_path[MAX_PATH_LENGTH];
+
+    ipaddr_t saddr;
+
+    char request_buffer[REQUEST_BUFFER_SIZE];
+    int request_buffer_size = 0;
+
+    http_method method;
+    char url[URL_LENGTH];
+    char protocol[PROTOCOL_LENGTH];
+
+    response_buffer_size = 0;
+    alarm_went_off = 0;
+
+    /* open new socket, because previous connection might not be closed */
+    if (tcp_socket() != 0) {
+        return 0;
+    }
+
+    /*
+      If we are superuser, we can chroot for safety.
+      This has to be done after tcp_socket, because
+      it needs access to the ethernet device.
+      Note that this will be done again for each
+      connection, but that doesn't do any harm.
+    */
+    if (geteuid() == 0) {
+        /* chroot doesn't accept relative paths */
+        if (!make_absolute_path(path, absolute_path, MAX_PATH_LENGTH)
+            || (chroot(absolute_path) < 0)
+            || (chdir("/") < 0)) {
+            return 0;
+        }
+    }
+
+    if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
+        return 0;
+    }
+
+    request_buffer_size = get_request(request_buffer, REQUEST_BUFFER_SIZE);
+
+    if (request_buffer_size < 0) {
+        tcp_close();
+        return 1;
+    }
+
+    if (parse_request(request_buffer, request_buffer_size,
+                      &method,
+                      url, URL_LENGTH,
+                      protocol, PROTOCOL_LENGTH)) {
+        if (!(write_response(method, url, protocol)
+              && send_buffer())) {
+            /*
+              Don't call tcp_close in case of error,
+              because the client may think all data
+              was sent correctly because of that.
+            */
+            return 1;
+        }
+    } else {
+        if (!(write_error(STATUS_BAD_REQUEST)
+              && send_buffer())) {
+            /*
+              Don't call tcp_close in case of error,
+              because the client may think all data
+              was sent correctly because of that.
+            */
+            return 1;
+        }
+    }
+
+    /* properly close connection */
+    if (tcp_close() != 0) {
+        return 0;
+    }
+
+    signal(SIGALRM, alarm_handler);
+    alarm(TIME_OUT);
+    while (tcp_read(request_buffer, REQUEST_BUFFER_SIZE) > 0) {}
+    alarm(0);
+
+    return 1;
+
+}
+
+
+/* Compile absolute path to 'path' with current working dir */
 /* 1 on success, 0 on failure */
 
 int make_absolute_path(char *path, char *absolute, int max_length) {
@@ -208,75 +279,10 @@ int make_absolute_path(char *path, char *absolute, int max_length) {
 }
 
 
-/* 1 on success, 0 on failure */
-
-int serve(void) {
-
-    ipaddr_t saddr;
-
-    char request_buffer[REQUEST_BUFFER_SIZE];
-    int request_buffer_size = 0;
-
-    http_method method;
-    char url[URL_LENGTH];
-    char protocol[PROTOCOL_LENGTH];
-
-    response_buffer_size = 0;
-    alarm_went_off = 0;
-
-    if (tcp_listen(LISTEN_PORT, &saddr) < 0) {
-        return 0;
-    }
-
-    request_buffer_size = get_request(request_buffer, REQUEST_BUFFER_SIZE);
-
-    if (request_buffer_size < 0) {
-        tcp_close();
-        return 1;
-    }
-
-    if (parse_request(request_buffer, request_buffer_size,
-                      &method,
-                      url, URL_LENGTH,
-                      protocol, PROTOCOL_LENGTH)) {
-        if (!(write_response(method, url, protocol)
-              && send_buffer())) {
-            /*
-              Don't call tcp_close in case of error,
-              because the client may think all data
-              was sent correctly because of that.
-            */
-            return 1;
-        }
-    } else {
-        if (!(write_error(STATUS_BAD_REQUEST)
-              && send_buffer())) {
-            /*
-              Don't call tcp_close in case of error,
-              because the client may think all data
-              was sent correctly because of that.
-            */
-            return 1;
-        }
-    }
-
-    if (tcp_close() != 0) {
-        return 0;
-    }
-
-
-    signal(SIGALRM, alarm_handler);
-    alarm(TIME_OUT);
-    while (tcp_read(request_buffer, REQUEST_BUFFER_SIZE) > 0) {}
-    alarm(0);
-
-
-    return 1;
-
-}
-
-
-/* number of bytes read on success, -1 on failure */
+/*
+  Read request at least until entire request header is in
+  Returns: number of bytes read on success, -1 on failure
+*/
 
 int get_request(char *buffer, int max_length) {
 
@@ -345,17 +351,21 @@ int get_request(char *buffer, int max_length) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Parse method, url and protocol from request header
+  Returns: 1 on success, 0 on failure
+*/
 
-int parse_request(char *buffer, int buffer_size, http_method *method, char *url, int url_length, char *protocol, int protocol_length) {
+int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
+                  int url_length, char *protocol, int protocol_length) {
 
     char *method_string;
     int marker;
     int pointer = 0;
 
     /* read spaces */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] == ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] == ' ') {
         pointer++;
     }
 
@@ -363,8 +373,8 @@ int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
     method_string = buffer + pointer;
 
     /* read method */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != ' ') {
         pointer++;
     }
 
@@ -376,8 +386,8 @@ int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
     pointer++;
 
     /* read spaces */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] == ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] == ' ') {
         pointer++;
     }
 
@@ -385,8 +395,8 @@ int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
     marker = pointer;
 
     /* read url */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != ' ') {
         pointer++;
     }
 
@@ -404,8 +414,8 @@ int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
     memcpy(url, buffer + marker, (pointer - marker));
 
     /* read spaces */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] == ' ')) {
+    while (pointer < buffer_size
+           && buffer[pointer] == ' ') {
            pointer++;
     }
 
@@ -413,9 +423,9 @@ int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
     marker = pointer;
 
     /* read protocol */
-    while ((pointer < buffer_size)
-           && (buffer[pointer] != ' ')
-           && (buffer[pointer] != '\r')) {
+    while (pointer < buffer_size
+           && buffer[pointer] != ' '
+           && buffer[pointer] != '\r') {
         pointer++;
     }
 
@@ -464,7 +474,10 @@ int parse_request(char *buffer, int buffer_size, http_method *method, char *url,
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Call a response handler for given HTTP method
+  Returns: 1 on success, 0 on failure
+*/
 
 int write_response(http_method method, char *url, char *protocol) {
 
@@ -486,7 +499,10 @@ int write_response(http_method method, char *url, char *protocol) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Send HTTP response with possible message body
+  Returns: 1 on success, 0 on failure
+*/
 
 int handle_get(char *url) {
 
@@ -552,9 +568,11 @@ int handle_get(char *url) {
     /* if lastmodified is in the future, just send the current datetime */
     if (difftime(time(NULL), file_stat.st_mtime) < 0) {
         time(&curtime);
-        strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
+        strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT,
+                 gmtime(&curtime));
     } else {
-        strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&file_stat.st_mtime));
+        strftime(lastmodified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT,
+                 gmtime(&file_stat.st_mtime));
     }
 
     /* write header and header/body seperator */
@@ -598,9 +616,13 @@ int handle_get(char *url) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Parse filename and mimetype from url
+  Returns: 1 on success, 0 on failure
+*/
 
-int parse_url(char *url, char *filename, int filename_length, char *mimetype, int mimetype_length) {
+int parse_url(char *url, char *filename, int filename_length, char *mimetype,
+              int mimetype_length) {
 
     char *mime;
     char *file;
@@ -676,7 +698,10 @@ int parse_url(char *url, char *filename, int filename_length, char *mimetype, in
 }
 
 
-/* 1 if char is valid in filename, 0 otherwise */
+/*
+  Check if character is valid in a filename
+  Returns: 1 if char is valid in filename, 0 otherwise
+*/
 
 int file_name_character(int c) {
 
@@ -702,7 +727,10 @@ int file_name_character(int c) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Send error status code with small HTML body
+  Returns: 1 on success, 0 on failure
+*/
 
 int write_error(http_status status) {
 
@@ -717,7 +745,8 @@ int write_error(http_status status) {
 
     /* send current time as lastmodified */
     time(&curtime);
-    strftime(last_modified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT, gmtime(&curtime));
+    strftime(last_modified, HEADER_LINE_LENGTH, DATE_TIME_FORMAT,
+             gmtime(&curtime));
 
     /* content body */
     snprintf(html_error, HTML_ERROR_LENGTH, HTML_ERROR, VERSION, LISTEN_PORT);
@@ -726,7 +755,7 @@ int write_error(http_status status) {
 
     return (write_status(status)
             && write_general_headers()
-            && write_header(HEADER_CONTENT_TYPE, "text/plain")
+            && write_header(HEADER_CONTENT_TYPE, "text/html")
             && write_header(HEADER_CONTENT_LENGTH, content_length)
             && write_header(HEADER_LAST_MODIFIED, last_modified)
             && write_data("\r\n", 2)
@@ -735,7 +764,10 @@ int write_error(http_status status) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Write status line for given status code to response buffer
+  Returns: 1 on success, 0 on failure
+*/
 
 int write_status(http_status status) {
 
@@ -754,7 +786,7 @@ int write_status(http_status status) {
             status_code = 400;
             break;
         case STATUS_PAYMENT_REQUIRED:
-            status_string = "Payment required for files this big";
+            status_string = "We need a new stereo";
             status_code = 402;
             break;
         case STATUS_FORBIDDEN:
@@ -779,7 +811,8 @@ int write_status(http_status status) {
     }
 
     /* format status line */
-    written = snprintf(status_line, HEADER_LINE_LENGTH, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
+    written = snprintf(status_line, HEADER_LINE_LENGTH, "%s %d %s\r\n", PROTOCOL,
+                       status_code, status_string);
 
     if (written >= HEADER_LINE_LENGTH) {
         written = HEADER_LINE_LENGTH -1;
@@ -790,7 +823,10 @@ int write_status(http_status status) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Write some general headers to response buffer
+  Returns: 1 on success, 0 on failure
+*/
 
 int write_general_headers(void) {
 
@@ -806,7 +842,10 @@ int write_general_headers(void) {
 }
 
 
-/* 1 on success, 0 on failure */
+/*
+  Write header line for given header and value to response buffer
+  Returns: 1 on success, 0 on failure
+*/
 
 int write_header(http_header header, char *value) {
 
@@ -835,7 +874,8 @@ int write_header(http_header header, char *value) {
     }
 
     /* format status line */
-    written = snprintf(header_line, HEADER_LINE_LENGTH, "%s: %s\r\n", header_string, value);
+    written = snprintf(header_line, HEADER_LINE_LENGTH, "%s: %s\r\n",
+                       header_string, value);
 
     if (written >= HEADER_LINE_LENGTH) {
         written = HEADER_LINE_LENGTH -1;
@@ -846,8 +886,10 @@ int write_header(http_header header, char *value) {
 }
 
 
-/* write bytes to buffer and send buffer if is is full */
-/* 1 on success, 0 on failure */
+/*
+  Write bytes to buffer and send buffer if is is full
+  Returns: 1 on success, 0 on failure
+*/
 
 int write_data(const char *data, int length) {
 
@@ -881,8 +923,10 @@ int write_data(const char *data, int length) {
 }
 
 
-/* send contents of buffer */
-/* 1 on success, 0 on failure */
+/*
+  Send contents of response buffer to client
+  Returns: 1 on success, 0 on failure
+*/
 
 int send_buffer() {
 
