@@ -8,9 +8,9 @@
 
 
 /*
-  Test write_before_connect.c
+  Test write_before_socket.c
 
-  Tries to do a tcp_write before there is a connection.
+  Tries to do a tcp_write before there is opened a socket.
 */
 
 

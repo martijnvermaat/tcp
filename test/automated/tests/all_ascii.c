@@ -21,6 +21,8 @@ int main(void) {
     char client_buf[1], server_buf[1];
     char *eth, *ip1, *ip2;
 
+    int pid, status;
+
     int i, j;
 
     ipaddr_t saddr;
@@ -40,8 +42,14 @@ int main(void) {
 
     alarm(15);
 
+    pid = fork();
 
-    if (fork()) {
+    if (pid == -1) {
+        fprintf(stderr, "Unable to fork client process\n");
+        return 1;
+    }
+
+    if (pid == 0) {
 
         /* Client process running in $IP1 */
 
@@ -116,6 +124,9 @@ int main(void) {
         }
 
         while (tcp_read(server_buf, 4) > 0) {}
+
+        /* Wait for client process to finish */
+        while (wait(&status) != pid);
 
         return 0;
 

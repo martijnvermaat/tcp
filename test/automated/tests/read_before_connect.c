@@ -8,9 +8,9 @@
 
 
 /*
-  Test read_before_connect.c
+  Test read_before_socket.c
 
-  Tries to do a tcp_read before there is a connection.
+  Tries to do a tcp_read before there is opened a socket.
 */
 
 

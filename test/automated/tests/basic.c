@@ -20,6 +20,8 @@ int main(void) {
     char client_buf[8], server_buf[8];
     char *eth, *ip1, *ip2;
 
+    int pid, status;
+
     ipaddr_t saddr;
 
     eth = getenv("ETH");
@@ -35,10 +37,18 @@ int main(void) {
         return 1;
     }
 
+    /* shouldn't alarm() be called INSIDE the two different processes below? */
     alarm(15);
 
 
-    if (fork()) {
+    pid = fork();
+
+    if (pid == -1) {
+        fprintf(stderr, "Unable to fork client process\n");
+        return 1;
+    }
+
+    if (pid == 0) {
 
         /* Client process running in $IP1 */
 
@@ -117,6 +127,9 @@ int main(void) {
         }
 
         while (tcp_read(server_buf, 4) > 0) {}
+
+        /* Wait for client process to finish */
+        while (wait(&status) != pid);
 
         return 0;
 

@@ -35,8 +35,14 @@ int main(void) {
 
     alarm(15);
 
+    pid = fork();
 
-    if (fork()) {
+    if (pid == -1) {
+        fprintf(stderr, "Unable to fork client process\n");
+        return 1;
+    }
+
+    if (pid == 0) {
 
         /* Client process running in $IP1 */
 
@@ -71,6 +77,9 @@ int main(void) {
             fprintf(stderr, "Server: Listening for client failed\n");
             return 1;
         }
+
+        /* Wait for client process to finish */
+        while (wait(&status) != pid);
 
         return 0;
 
