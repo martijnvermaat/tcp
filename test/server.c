@@ -5,12 +5,12 @@
  
 #define THEIR_IP getenv("IP1")
 #define OUR_PORT 80
-
+#define MAX_LEN 75
 
 int main(void) {
 
-  int maxlen = 75;
-  char data[maxlen+1];
+  int maxlen = MAX_LEN;
+  char data[MAX_LEN+1];
   int len;
   int i = 0;
 

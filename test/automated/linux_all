@@ -26,7 +26,7 @@ echo >> $OUTPUT
 for i in $( ls build/ | grep -v svn ); do
 
     echo "* Test $i.c" >> $OUTPUT
-    build/$i > /dev/null 2>> $OUTPUT ; sleep .2
+    build/$i > /dev/null 2>> $OUTPUT ; sleep 1
     echo >> $OUTPUT
 
 done

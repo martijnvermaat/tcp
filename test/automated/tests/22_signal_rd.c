@@ -7,25 +7,30 @@
 #include <signal.h>
 #include "tcp.h"
 
-/*
-  Test basic.c
 
-  Standard listen and connect. Read and write to both sides,
-  with compares on received data and expected data. Close.
+/*
+  Test signal.c
+
+  Can we set an alarm to stop a blocking read when te client abruptly
+  aborts connection?
+  
 */
 
-
 static void alarm_handler(int sig) {
+    fprintf(stderr,"alarm went of\n");
+    fflush(stderr);
     /* just return to interrupt */
 }
 
 
 int main(void) {
 
-    char client_buf[8], server_buf[8];
+    char client_buf[1], server_buf[1];
     char *eth, *ip1, *ip2;
 
     int pid, status;
+
+    unsigned char j, v;
 
     ipaddr_t saddr;
 
@@ -52,9 +57,7 @@ int main(void) {
     if (pid == 0) {
 
         /* Client process running in $IP1 */
-
         eth[0] = '1';
-        /*ip_init();*/
 
         if (tcp_socket() != 0) {
             fprintf(stderr, "Client: Opening socket failed\n");
@@ -65,48 +68,21 @@ int main(void) {
             fprintf(stderr, "Client: Connecting to server failed\n");
             return 1;
         }
-
-        if (tcp_write("foo", 4) != 4) {
-            fprintf(stderr, "Client: Writing 'foo' failed\n");
+        
+        client_buf[0] = 255;
+        if (tcp_write(client_buf, 1) != 1) {
+            fprintf(stderr, "Client: Writing ASCII character failed\n");
             return 1;
         }
-
-        signal(SIGALRM, alarm_handler);
-        alarm(5);
-
-        if (tcp_read(client_buf, 4) != 4) {
-            fprintf(stderr, "Client: Reading 4 bytes failed\n");
-            return 1;
-        }
-
-        alarm(0);
-
-        if (strcmp(client_buf, "bar")) {
-            fprintf(stderr, "Client: Reading 'bar' failed\n");
-            return 1;
-        }
-
-        fprintf(stderr, "client closing...");
-        if (tcp_close() != 0) {
-            fprintf(stderr, "Client: Closing connection failed\n");
-            return 1;
-        }
-
-        signal(SIGALRM, alarm_handler);
-        alarm(5);
-
-        while (tcp_read(server_buf, 4) > 0) {}
-
-        alarm(0);
-
+        fprintf(stderr,"Client: Sent one byte, will stop now\n");
+        fflush(stderr);
+        /* do nothing */        
         return 0;
 
     } else {
 
         /* Server process running in $IP2 */
-
         eth[0]='2';
-        /*ip_init();*/
 
         if (tcp_socket() != 0) {
             fprintf(stderr, "Server: Opening socket failed\n");
@@ -115,36 +91,36 @@ int main(void) {
 
         signal(SIGALRM, alarm_handler);
         alarm(5);
-
+        
         if (tcp_listen(80, &saddr) < 0) {
             fprintf(stderr, "Server: Listening for client failed\n");
             return 1;
         }
-
+        
         alarm(0);
-
         signal(SIGALRM, alarm_handler);
         alarm(5);
 
-        if (tcp_read(server_buf, 4) != 4) {
-            fprintf(stderr, "Server: Reading 4 bytes failed\n");
+        if (tcp_read(server_buf, 1) < 0) {
+            fprintf(stderr, "Server: Reading byte 1 failed\n");
             return 1;
         }
+        fprintf(stderr,"server read one byte\n");
+        fflush(stderr);
+        alarm(0);
+        signal(SIGALRM, alarm_handler);
+        alarm(2);
 
+        if (tcp_read(server_buf, 1) < 0) {
+            fprintf(stderr, "Server: Reading byte 2 failed\n");
+            return 1;
+        }
+        fprintf(stderr,"server passed blocking read\n");
+        fflush(stderr);
         alarm(0);
 
-        if (strcmp(server_buf, "foo")) {
-            fprintf(stderr, "Server: Reading 'foo' failed\n");
-            return 1;
-        }
-
-        if (tcp_write("bar", 4) != 4) {
-            fprintf(stderr, "Server: Writing 'bar' failed\n");
-            return 1;
-        }
-        fprintf(stderr, "server closing...");
         if (tcp_close() != 0) {
-            fprintf(stderr, "Server: Closing connection failed\n");
+            fprintf(stderr, "Server: Closing connection failed (this is what we want)\n");
             return 1;
         }
 
@@ -157,10 +133,7 @@ int main(void) {
 
         /* Wait for client process to finish */
         while (wait(&status) != pid);
-
         return 0;
-
     }
-
-
+    
 }

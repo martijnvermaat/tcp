@@ -2,6 +2,9 @@
 #define __TCP_H__
 
 #include <string.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <alloca.h>
 #include "inet.h"
 #include "ip.h"
 
@@ -19,7 +22,7 @@
 #define	IP_PROTO_TCP	6
 #define CLIENT_PORT     8042	
 
-typedef char tcp_u8t;   /* <- when doing arithmetic we should cast to int */
+typedef unsigned char tcp_u8t;   /* <- when doing arithmetic we should cast to int */
 typedef unsigned short tcp_u16t;
 typedef unsigned long tcp_u32t;
 

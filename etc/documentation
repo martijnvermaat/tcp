@@ -32,9 +32,17 @@ Design decision:
     want recv_tcp_packet blijft dan in de loop hangen.
 
 Design decision:
-    Na het versturen van de eerste syn, moet er gewacht worden op een
+    Na het versturen van de eerste syn gaat de state naar SYN_SENT, moet er gewacht worden op een
     ack+syn. Als er een packet binnenkomt met een ack, maar zonder syn, dan
     negeren we dit packet. De SYN, waar we  op wachten, moet toch de
     verplichte ACK bevatten. Als het syn+ack packet niet binnen 1 seconde
     arriveert, dan gaat de state naar CLOSED, daarna wordt de syn opnieuw
-    verstuurt. De state gaat weer terug naar SYN_SENT.
+    verstuurt. De state gaat dan weer terug naar SYN_SENT.
+
+Design decision:
+    To let the user be able to interupt blocking calls to tcp_listen() and
+    tcp_read(), these functions replace the signal handler of the user by their
+    own signal handler. When the alarm goes off, the tcp handler is called by 
+    operating system, the user's signal handler is called by the tcp library and 
+    the blocking call returns. In case of tcp_read(), the bytes that were 
+    already received are delivered to the user.

@@ -13,7 +13,7 @@
 AR = aal
 RANLIB = touch
 
-CFLAGS  = -DDEBUG -Wall -I/usr/local/include/cn -I../ip -O0
+CFLAGS  = -DDEBUG -DLITTLE_ENDIAN -Wall -I/usr/local/include/cn -I../ip -O0
 LDFLAGS = -L../ip/ -L/usr/local/lib -lip -lcn
 SOURCES = tcp.c
 OBJECTS = tcp.o

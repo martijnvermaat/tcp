@@ -7,25 +7,29 @@
 #include <signal.h>
 #include "tcp.h"
 
+#define BUF_SIZE 20000
 /*
-  Test basic.c
+  Test big_test.c
 
-  Standard listen and connect. Read and write to both sides,
-  with compares on received data and expected data. Close.
+  sends 50 kilobyte
 */
 
+void print_bits(char c);
 
 static void alarm_handler(int sig) {
+    fprintf(stderr, "test 24: alarm went of");
+    fflush(stderr); 
     /* just return to interrupt */
 }
 
 
 int main(void) {
-
-    char client_buf[8], server_buf[8];
+    
+    char client_buf[BUF_SIZE], server_buf[BUF_SIZE];
     char *eth, *ip1, *ip2;
 
-    int pid, status;
+    int pid, status, total, read;
+    int j, v;
 
     ipaddr_t saddr;
 
@@ -41,6 +45,11 @@ int main(void) {
         fprintf(stderr, "The IP1 and IP2 environment variables must be set!\n");
         return 1;
     }
+    
+    /* fill buffer with pattern 012345670123... */
+    for (v=0;v<BUF_SIZE;v++) {
+        client_buf[v] = v % 8;
+    }
 
     pid = fork();
 
@@ -52,10 +61,8 @@ int main(void) {
     if (pid == 0) {
 
         /* Client process running in $IP1 */
-
         eth[0] = '1';
-        /*ip_init();*/
-
+ 
         if (tcp_socket() != 0) {
             fprintf(stderr, "Client: Opening socket failed\n");
             return 1;
@@ -65,37 +72,24 @@ int main(void) {
             fprintf(stderr, "Client: Connecting to server failed\n");
             return 1;
         }
-
-        if (tcp_write("foo", 4) != 4) {
-            fprintf(stderr, "Client: Writing 'foo' failed\n");
+        
+        j = tcp_write(client_buf, BUF_SIZE);
+        if (j < 1) {
+            fprintf(stderr, "Client: Writing failed\n"); 
             return 1;
         }
-
-        signal(SIGALRM, alarm_handler);
-        alarm(5);
-
-        if (tcp_read(client_buf, 4) != 4) {
-            fprintf(stderr, "Client: Reading 4 bytes failed\n");
-            return 1;
-        }
-
-        alarm(0);
-
-        if (strcmp(client_buf, "bar")) {
-            fprintf(stderr, "Client: Reading 'bar' failed\n");
-            return 1;
-        }
-
-        fprintf(stderr, "client closing...");
+        fprintf(stderr,"Client: Sent %d Kbytes\n",j);    
+       
+        
         if (tcp_close() != 0) {
             fprintf(stderr, "Client: Closing connection failed\n");
             return 1;
         }
 
         signal(SIGALRM, alarm_handler);
-        alarm(5);
+        alarm(3);
 
-        while (tcp_read(server_buf, 4) > 0) {}
+        while (tcp_read(client_buf, 4) > 0) {}
 
         alarm(0);
 
@@ -104,9 +98,7 @@ int main(void) {
     } else {
 
         /* Server process running in $IP2 */
-
         eth[0]='2';
-        /*ip_init();*/
 
         if (tcp_socket() != 0) {
             fprintf(stderr, "Server: Opening socket failed\n");
@@ -120,29 +112,28 @@ int main(void) {
             fprintf(stderr, "Server: Listening for client failed\n");
             return 1;
         }
-
         alarm(0);
-
+        
         signal(SIGALRM, alarm_handler);
-        alarm(5);
+        total = 0;
+        fprintf(stderr,"server: starting to read...\n");
+        fflush(stderr);
+        while (total < BUF_SIZE) {
 
-        if (tcp_read(server_buf, 4) != 4) {
-            fprintf(stderr, "Server: Reading 4 bytes failed\n");
-            return 1;
+            alarm(10);
+
+            read = tcp_read(server_buf, BUF_SIZE - total);
+            if (read < 0) {
+                fprintf(stderr, "Server: Reading %d bytes failed\n",BUF_SIZE-total);
+                return 1;
+            } else {
+                total += read;
+                fprintf(stderr, "Server: Read %d bytes\n",read);
+            }
+            alarm(0);
         }
+        fprintf(stderr, "Server: Read %d bytes in total...closing connection.\n",total);
 
-        alarm(0);
-
-        if (strcmp(server_buf, "foo")) {
-            fprintf(stderr, "Server: Reading 'foo' failed\n");
-            return 1;
-        }
-
-        if (tcp_write("bar", 4) != 4) {
-            fprintf(stderr, "Server: Writing 'bar' failed\n");
-            return 1;
-        }
-        fprintf(stderr, "server closing...");
         if (tcp_close() != 0) {
             fprintf(stderr, "Server: Closing connection failed\n");
             return 1;
@@ -161,6 +152,6 @@ int main(void) {
         return 0;
 
     }
-
-
+    
 }
+

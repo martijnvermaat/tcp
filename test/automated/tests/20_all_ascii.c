@@ -16,6 +16,7 @@
   with a different value.
 */
 
+void print_bits(char c);
 
 static void alarm_handler(int sig) {
     /* just return to interrupt */
@@ -29,7 +30,7 @@ int main(void) {
 
     int pid, status;
 
-    char i, j;
+    unsigned char j, v;
 
     ipaddr_t saddr;
 
@@ -70,20 +71,29 @@ int main(void) {
             fprintf(stderr, "Client: Connecting to server failed\n");
             return 1;
         }
-
-        for (i=0; i<127; i++) {
-
-            client_buf[0] = i;
-
+        
+        for (v=0; v<255; v++) {
+            client_buf[0] = v;
             if (tcp_write(client_buf, 1) != 1) {
-                fprintf(stderr, "Client: Writing ASCII character %u failed\n", i);
+                fprintf(stderr, "Client: Writing ASCII character %u failed (", v);
+                print_bits(v);fprintf(stderr,")\n");   
                 return 1;
             }
-
-            fprintf(stderr, "Client: Sent ASCII character %u\n", i);
-
+            printf("Client: Sent ASCII character %u (", v);
+            print_bits(v);printf(")\n");
         }
+        /* send last byte (255)*/
+        client_buf[0] = v;
+        if (tcp_write(client_buf, 1) != 1) {
+            fprintf(stderr, "Client: Writing ASCII character %u failed (", v);
+            print_bits(v);fprintf(stderr,")\n");   
+            return 1;
+        }
+        printf("Client: Sent ASCII character %u (", v);
+        print_bits(v);printf(")\n");
 
+        
+        
         if (tcp_close() != 0) {
             fprintf(stderr, "Client: Closing connection failed\n");
             return 1;
@@ -103,7 +113,6 @@ int main(void) {
         /* Server process running in $IP2 */
 
         eth[0]='2';
-        /*ip_init();*/
 
         if (tcp_socket() != 0) {
             fprintf(stderr, "Server: Opening socket failed\n");
@@ -120,7 +129,7 @@ int main(void) {
 
         alarm(0);
 
-        for (j=0; j<127; j++) {
+        for (j=0; j<255; j++) {
 
             signal(SIGALRM, alarm_handler);
             alarm(5);
@@ -132,15 +141,37 @@ int main(void) {
 
             alarm(0);
 
-            fprintf(stderr, "Server: Found byte 0x%x\n", server_buf[0]);
+            printf("Server: Found byte %u\n", (tcp_u8t) server_buf[0]);
 
-            if (server_buf[0] != j) {
+            if (((tcp_u8t)server_buf[0]) != j) {
                 fprintf(stderr, "Server: Reading ASCII character %u failed\n", j);
                 fprintf(stderr, "Server: Found ASCII character %u\n", server_buf[0]);
                 return 1;
             }
 
         }
+        signal(SIGALRM, alarm_handler);
+        alarm(5);
+
+        if (tcp_read(server_buf, 1) < 0) {
+            fprintf(stderr, "Server: Reading 1 byte failed\n");
+            return 1;
+        }
+
+        alarm(0);
+
+        fprintf(stderr, "Server: Found byte %u\n", (tcp_u8t) server_buf[0]);
+
+        if (((tcp_u8t)server_buf[0]) != j) {
+            fprintf(stderr, "Server: Reading ASCII character %u failed\n", j);
+            fprintf(stderr, "Server: Found ASCII character %u\n", server_buf[0]);
+            return 1;
+        }
+
+
+
+
+
 
         if (tcp_close() != 0) {
             fprintf(stderr, "Server: Closing connection failed\n");
@@ -160,6 +191,6 @@ int main(void) {
         return 0;
 
     }
-
-
+    
 }
+
