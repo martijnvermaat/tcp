@@ -24,3 +24,618 @@ geef error als tcp_... methode wordt aangeroepen vanuit verkeerde state!
 Should tcp_write declare event E_PARTNER_DEAD?
 tcp_connect stopt na 1 keer al met zenden als ip_send mislukt.
 If the first syn contains an ack, we discard it.
+
+
+
+
+\documentclass[11pt]{article}
+\usepackage{listings}
+\usepackage[english]{babel}
+\usepackage{a4}
+\usepackage{latexsym}
+\usepackage[
+    colorlinks,
+    pdftitle={Design Document TCP Implementation},
+    pdfsubject={TCP implementation},
+    pdfauthor={Laurens Bronwasser, Martijn Vermaat}
+]{hyperref}
+
+\title{Design Document TCP Implementation}
+\author{
+    Laurens Bronwasser and Martijn Vermaat\\
+    \{lmbronwa,mvermaat\}@cs.vu.nl
+}
+\date{31 januari 2005}
+
+\begin{document}
+\maketitle
+
+
+\lstset{
+  numbers=none,
+  basicstyle=\small,
+  frame=tb,
+  language=C,
+  captionpos=b
+}
+
+
+\section{High-level design}
+
+
+The most important high-level design decision is that we choose to do a
+three-tier implementation. The three tiers in our TCP implementation are
+the connection-ori\"ented tier, the state tier, and the connection-less
+tier.
+
+The connection-ori\"ented tier provides a TCP interface to the application
+layer, whereas the connection-less tier deals only with sending and
+recieving TCP packets and works directly on the IP layer interface.
+
+The middle layer in our implementation will be the state tier. This tier
+will have to bridge the gap between a connection-less environment and a
+connection-ori\"ented environment, and therefore has to maintain a state.
+
+\paragraph{}
+
+Calling of procedures happens only within one tier, or from one tier to
+the tier directly beneeth it. This programming paradigm is illustrated by the 
+attached high-level design diagram.
+
+
+\section{Low-level design}
+
+
+\subsection{Connection-ori\"ented tier}
+
+
+We will roughly sketch the structure of all procedures in the
+connection-ori\"ented tier, mostly with pseudo-code, sometimes
+augmented with comments.
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure tcp\_read]
+/*
+  *buf      Buffer to store data
+  maxlen    Maximum number of bytes to read
+
+  Returns number of bytes read.
+
+  This procedure is blocking.
+*/
+
+int tcp_read(char *buf, int maxlen) {
+
+    while ( buffer_empty() ) {
+        do_packet();
+    }
+
+    return copy_data(&buf, &maxlen);
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure tcp\_write]
+/*
+  *buf      Buffer with data to write
+  len       Number of bytes to write
+
+  Returns 0 on success, number of bytes written on incomplete
+  write, -1 otherwise.
+*/
+
+int tcp_write(char *buf, int len) {
+
+    bytes_left = len;
+
+    while (bytes_left) {
+        /* send_data calls do_packet when needed */
+        bytes_sent = send_data(*buf, bytes_left);
+        if (bytes_sent == -1) break;
+        bytes_left -= bytes_sent;
+    }
+
+    if (bytes_left == len) {
+        /* will also happen if len=0 */
+        return -1;
+    } else if (bytes_left) {
+        return len-bytes_left;
+    } else {
+        return 0;
+    }
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure tcp\_connect]
+/*
+  dst       Host address to connect to
+  port      Port number on host to connect to
+
+  Returns 0 on success, -1 on failure.
+*/
+
+int tcp_connect(ipaddr_t dst, int port) {
+
+    /* send_syn calls do_packet when needed */
+    return send_syn();
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure tcp\_listen]
+/*
+  port      Local port to connect to
+  *src      Address of client to listen to
+
+  Returns 0.
+
+  This procedure is blocking.
+*/
+
+int tcp_listen(int port, ipaddr_t *src) {
+
+    set_state(LISTEN);
+    do {
+        do_packet();
+        if (get_state() == SYN_RECEIVED) {
+            send_syn();
+        }
+    while ( get_state() != ESTABLISHED );
+    return 0;
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure tcp\_close]
+/*
+  Returns 0, except when there is no active connection.
+*/
+
+int tcp_close() {
+
+    /* check current state */
+
+    /* send_fin calls do_packet when needed */
+    return send_fin();
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure tcp\_socket]
+/*
+  Returns 0 on success, -1 on failure.
+*/
+
+int tcp_socket() {
+
+    return set_initial_state();
+
+}
+\end{lstlisting}
+
+
+
+\subsection{State tier}
+
+As we did in the previous section for the connection-ori\"ented tier, we
+will describe most procedures of the state tier in this section, again by
+using pseudo-code.
+First, we will give an overview of the most important decisions that we made.
+
+
+\subsubsection{Design decisions}
+
+
+\paragraph{Buffer for incoming data}
+    The buffer for incoming data is bigger than the maximum payload of a tcp
+    packet. This is necessary because new data might come in while for example 
+    \verb|tcp_write()| is polling for ack's. These data must be stored in the 
+    buffer; 
+    there is no way we can deliver it to the user.
+    The buffer is circular because this prevents shoving of data to the begin of 
+    the buffer to fill the gaps. 
+    The state of the buffer is comprised in a variable that points to the 
+    current start of the buffer, a variable that indicates the amount of data in 
+    the buffer and of course the buffer itself.    
+
+\paragraph{Pushing of incoming data}
+    We don't assume that every incoming packet has the PSH flag set, eventhough 
+    the assignment prescribes to set PSH on all outbound packets. That we do
+    check the PHS flag means 
+    that if it is set, \verb|tcp_read()| delivers is the data immediately.
+    Only if there is no data to be pushed, \verb|tcp_read()| keeps on polling 
+    ip for 
+    more data until the amount of data specified by the user is received.
+    
+    \verb|tcp_read()| might return less (if the \verb|PSH| flag is set), but 
+    the \verb|PSH| flag 
+    will never cause \verb|tcp_read()| to return more 
+    data than indicated by the users parameter.
+    
+    To keep track of the number of bytes that need to be pushed, a variable is 
+    added to the tcb: \verb|rcvd_data_push|.
+
+\paragraph{Acknowledgements}
+    If data comes in tcp has never seen before (i.e. fresh data), an 
+    acknowledgement is send
+    immediately by \verb|handle_data()|. In real tcp implementations sending of
+     ack's 
+    should be postponed until the data is actually delivered to the user, 
+    but since the assignment prescribes to use a window of size 1, we have to 
+    acknowledge each packet instantly.
+
+\paragraph{Connection establishment}
+    After the first \verb|syn| is sent, the state transits to \verb|SYN_SENT| 
+    and we wait for the \verb|syn+ack| response. In this state, only 
+    \verb|syn+ack| packets will be accepted. If a packet arrives that carries an
+    acknowledgement, but no \verb|syn|,...
+    Als er een packet binnenkomt met een ack, maar zonder syn, dan
+    negeren we dit packet. De SYN, waar we  op wachten, moet toch de
+    verplichte ACK bevatten. Als het syn+ack packet niet binnen 1 seconde
+    arriveert, dan gaat de state naar CLOSED, daarna wordt de syn opnieuw
+    verstuurt. De state gaat dan weer terug naar \verb|SYN_SENT|.
+    
+\paragraph{State transitions}
+    The \verb|declare_event()| procedure performs all necessary state 
+    transitions, based on the event that is passed as a parameter to this 
+    procedure. For example, 
+    is the state is \verb|S_LISTEN| and a \verb|syn| is received, 
+    \verb|E_SYN_RECEIVED| is passed to \verb|declare_event()|. The state will 
+    then be altered to \verb|S_SYN_RECEIVED|. In this way, \verb|declare_event()| directly implements the state 
+    transition diagrams shown in appendix A.
+    
+    There is a trade-off here between straightforward source code and source 
+    code that has some build in bug-detection, which are both preferable. If we 
+    had chosen for straightforward code, we had \verb|declare_event()| swallow
+    every event that takes place. For example \verb|handle_ack()| would then 
+    consist of only one line: 
+    \verb|if (ack_flag) {declare_event(E_ACK_RECEIVED)}|. Then we leave it to 
+    \verb|declare_event| to decide if a state transition is necessary.
+    On the other hand, if
+    some unexpected event happens, we wouldn't notice, because 
+    \verb|declare_event()| gracefully discards the event, without any warning.
+    
+    To make it easier to detect unexpected events (caused by a bug), we decided 
+    to make \verb|declare_event| accept only the events that are defined in the
+    state transition diagram. On all other events it starts to yell (on the 
+    screen). The consequence is that some code is a little bit more complex, 
+    because we can't just say \verb|declare_event(E_ACK_RECEIVED)|
+    on every incoming ack. We first have to check whether this ack event may 
+    declared for a state transition.
+
+
+\paragraph{Wrapping sequence numbers}
+    The sequence 
+
+    
+\subsubsection{State-tier Pseudocode}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure do\_packet]
+/*
+  Returns the number of bytes read, or -1 on failure.
+
+  This procedure is blocking.
+*/
+
+int do_packet() {
+
+    len = recv_tcp_packet(...., data);
+    handle_ack(ack_nb);
+    handle_fin(flags);
+    handle_syn(flags);
+    handle_data(data, data_sz);
+
+    return len;
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure handle\_ack]
+/*
+  ack_nb    Acknowledgement number
+
+  Void procedure.
+*/
+
+void handle_ack(u32_t ack_nb) {
+
+    /* Sequence numbers wrap around, solve this later */
+    if (ack_nb > tcb.our_sequence_num
+        && ack_nb <= tcb.expected_ack) {
+
+        tcb.our_sequence_num = ack_nb;
+        /* Adjust number of undelivered bytes */
+
+        if (get_state() == SYN_RECEIVED) {
+
+            set_state(ESTABLISHED);
+
+        } else if (get_state() == SYN_SENT) {
+
+            set_state(SYN_ACK_RECEIVED);
+
+        } else if (get_state() == FIN_WAIT_1) {
+
+            set_state(FIN_WAIT_2);
+
+        } else if (get_state() == LAST_ACK) {
+
+            set_state(CLOSED);
+
+        } else if (get_state() == CLOSING) {
+
+            set_state(TIME_WAIT);
+
+        }
+
+    }
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure handle\_syn]
+/*
+  flags     TCP packet flags
+
+  Void procedure.
+*/
+
+void handle_syn(u8_t flags) {
+
+    if (contains_syn(flags)) {
+
+        if (get_state() == LISTEN) {
+
+            set_state(SYN_RECEIVED);
+            /* send_syn will be called from tcp_listen */
+
+            send_ack();
+
+        } else if (get_state() == SYN_ACK_RECEIVED) {
+
+            set_state(ESTABLISHED);
+
+            send_ack();
+
+        }
+
+    }
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure handle\_fin]
+/*
+  flags     TCP packet flags
+
+  Void procedure.
+*/
+
+void handle_fin(u8_t flags) {
+
+    if (contains_fin(flags)) {
+
+        if (get_state() == ESTABLISHED) {
+
+            set_state(CLOSE_WAIT);
+            send_ack();
+
+        } else if (get_state() == FIN_WAIT_1) {
+
+            set_state(CLOSING);
+            send_ack();
+
+        } else if (get_state() == FIN_WAIT_2) {
+
+            set_state(TIME_WAIT);
+            send_ack();
+
+        }
+
+    }
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure copy\_data]
+/*
+  buf       Char buffer to copy bytes to
+  maxlen    Maximum number of bytes to copy
+
+  Returns number of bytes copied.
+*/
+
+int copy_data(*char buf, int maxlen) {
+
+    /* copy max <maxlen> bytes from buffer to <buf> */
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure send\_data]
+/*
+  buf       Buffer with bytes to send
+  len       Maximum number of bytes to send
+
+  Returns number of bytes sent, or -1 on error.
+*/
+
+int send_data(char *buf, int len) {
+
+    send = min(MAX_PACKET_SIZE, len);
+
+    send_tcp_packet(..., &buf, send);
+    tcb.our_sequence_number += send;
+    tcb.expected_ack = tcb.our_sequence_number-1;
+
+    do {
+        do_packet();
+    } while ( !<received ack> );
+
+    return send;
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+
+\begin{lstlisting}[title=Procedure send\_syn]
+/*
+  Returns 0 on success, -1 otherwise.
+*/
+
+int send_syn() {
+
+    send_tcp_packet(flags=syn,ack=current_ack);
+    tcb.our_sequence_number++;
+    tcb.expected_ack = tcb.our_sequence_number-1;
+    /*set_state(X);*/
+
+    do {
+        do_packet();
+    while (get_state() != ESTABLISHED);
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure send\_fin]
+/*
+  Returns 0 on success, -1 otherwise.
+*/
+
+int send_fin() {
+
+    send_tcp_packet(flags=fin,ack=current_ack);
+    tcb.our_sequence_number++;
+    tcb.expected_ack = tcb.our_sequence_number-1;
+    set_state(FIN_WAIT_1);
+
+    do {
+        do_packet();
+    while (get_state() == FIN_WAIT_1);
+
+}
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=Procedure send\_ack]
+/*
+  param     Description
+*/
+
+int send_ack() {
+
+}
+\end{lstlisting}
+
+
+\subsubsection{TCP Control Block}
+
+
+The \verb|tcb| (TCP Control Block) contains all information on the
+current state. This includes client and host addresses and ports, buffer
+data, packet sequence number, etcetera.
+
+
+\paragraph{}
+
+
+\begin{lstlisting}[title=The TCP Control Block structure]
+/* TCP control block */
+typedef struct tcb {
+    ipaddr_t our_ipaddr;
+    ipaddr_t their_ipaddr;
+    tcp_u16t our_port;
+    tcp_u16t their_port;
+    tcp_u32t our_seq_nr;
+    tcp_u32t their_seq_nr;  /* last byte we acked */
+    tcp_u32t ack_nr;        /* the seq nr to ack in next packet */
+    tcp_u32t expected_ack;  
+    char rcv_data[BUFFER_SIZE];
+    int rcvd_data_start;    /* pointer to start of circular buffer */
+    int rcvd_data_size;     /* nr of bytes in buffer */
+    int rcvd_data_psh;      /* number of bytes to push, (from start of buffer)*/
+    char *unacked_data;     /* transmitted data yet to be acked (or resent) */
+    int unacked_data_len;   /* length of transmitted data yet to be acked */
+    state_t state;          /* stores the current state of the connection */
+}
+
+\end{lstlisting}
+
+
+\paragraph{}
+
+
+\subsection{Connection-less tier}
+
+The only two procedures in this tier are \verb|send_tcp_packet()| and
+\verb|recv_tcp_packet()|.
+
+\paragraph{Procedure recv\_tcp\_packet()}
+This procedure calls \verb|ip\_receive()| only once. If a packet is corrupted,
+or if it is no tcp packet at all, \verb|recv\_tcp\_packet| returns -1.
+That it does not loop to wait for a valid packet, is because this might take 
+forever. The looping is taken care of by \verb|tcp\_read()|, which checks if the alarm 
+went of on every cycle.
+
+
+
+\end{document}

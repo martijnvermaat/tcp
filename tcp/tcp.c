@@ -222,7 +222,6 @@ int tcp_close(void){
     declare_event(E_CLOSE);
     send_fin();
     return 0;
-    /* todo: return error on ack time out? */
 }
 
 
@@ -574,8 +573,6 @@ void handle_syn(tcp_u8t flags, tcp_u32t seq_nr, ipaddr_t their_ip) {
         if (all_acks_received()) {
 
             declare_event(E_SYN_ACK_RECEIVED);
-            /* I think we could just use E_ACK_RECEIVED here instead of a 'special' transition */
-            /* todo: received sequence number may be invalid */
             tcb.their_seq_nr = seq_nr + 1;
             tcb.ack_nr = seq_nr + 1;
             send_ack();
@@ -810,13 +807,8 @@ int packet_is_valid(tcp_u32t seq_nr, tcp_u32t ack_nr, tcp_u8t flags,
     
     /* check seq and ack only if this is not a syn packet */
     if ( !(flags & SYN_FLAG) ) {
-    
-        diff = tcb.their_seq_nr - seq_nr;
-        if (diff > MAX_TCP_DATA) {
-            /* invalid sequence number!! */
-            return 0;
-        }
-        /* is the compulsory ACK flag present? */
+        /*    todo: check sequence number */
+        
         if ( !(flags & ACK_FLAG) ) {
             return 0;
         }
@@ -1033,17 +1025,11 @@ int recv_tcp_packet(ipaddr_t *src_ip,
     
     tcp = (tcp_hdr_t *) segment;
     
-    /* todo: connectionless tier should not touch the tcb, but 
-       can we believe ip? */
-    
     chksm = tcp_checksum(*src_ip, tcb.our_ipaddr, tcp, len);
     if (chksm) {
         return -1;
     }
     
-               
-    /* todo: what is the function of the ID field???*/
-
     *src_port = ntohs(tcp->src_port);
     *dst_port = ntohs(tcp->dst_port);
     *seq_nr   = ntohl(tcp->seq_nr);
