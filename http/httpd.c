@@ -10,7 +10,10 @@
 
 /*
   httpd.c
-  A simple HTTP/1.0 server.
+  A tiny HTTP/1.0 server.
+
+  See http://www.w3.org/Protocols/HTTP/1.0/draft-ietf-http-spec.html
+  for a reference guide.
 */
 
 
@@ -39,12 +42,14 @@ typedef enum {
 } http_status;
 
 typedef enum {
-    HEADER_CONTENT_TYPE
+    HEADER_CONTENT_TYPE, HEADER_SERVER, HEADER_ISLAND
 } http_header;
 
 
 int serve(void);
-int parse_request(char *request_buffer, http_method *method, char *url, http_protocol *protocol, char *headers);
+int parse_request(char *request, int request_length, http_method *method, char *url, http_protocol *protocol, char *headers);
+int read_token(char *buffer, int buffer_length, char *token);
+int count_spaces(char *buffer, int buffer_length);
 int response(void);
 int write_status(char *buffer, http_status status);
 int write_header(char *buffer, http_header header, char *value);
@@ -104,6 +109,7 @@ int main(int argc, char** argv) {
 int serve(void) {
 
     char request_buffer[MAX_REQUEST_LENGTH];
+    int request_length;
     ipaddr_t saddr;
 
     http_method method;
@@ -117,12 +123,14 @@ int serve(void) {
 
     signal(SIGALRM, alarm_handler);
     alarm(TIME_OUT);
-    if (tcp_read(request_buffer, MAX_REQUEST_LENGTH) < 1) {
-        return 1;
-    }
+    request_length = tcp_read(request_buffer, MAX_REQUEST_LENGTH);
     alarm(0);
 
-    if (parse_request(request_buffer, &method, url, &protocol, headers)) {
+    if (request_length < 1) {
+        return 1;
+    }
+
+    if (parse_request(request_buffer, request_length, &method, url, &protocol, headers)) {
         response();
     } else {
         /* 400 bad request (i think) */
@@ -144,9 +152,95 @@ int serve(void) {
 
 /* 1 on success, 0 on failure */
 
-int parse_request(char *request_buffer, http_method *method, char *url, http_protocol *protocol, char *headers) {
+int parse_request(char *request, int request_length, http_method *method, char *url, http_protocol *protocol, char *headers) {
+
+    char *protocol_string;
+    char *method_string;
+
+    int length = 0;
+    int i;
+
+    if (count_spaces(request, request_length - length) > 0) {
+        return 0;
+    }
+
+    i = read_token(request + length, request_length - length, method_string);
+    if (i < 1) {
+        return 0;
+    }
+
+    /* use strcasecmp for case INsensitive matching... */
+    if (strcmp(method_string, "GET") == 0) {
+        *method = METHOD_GET;
+    } else if (strcmp(method_string, "POST") == 0) {
+        *method = METHOD_POST;
+    } else {
+        *method = METHOD_UNKNOWN;
+    }
+
+    if (count_spaces(request + length, request_length - length) != 1) {
+        return 0;
+    }
+    length += i + 1;
+
+    i = read_token(request + length, request_length - length, url);
+    if (i < 1) {
+        return 0;
+    }
+
+    if (count_spaces(request + length, request_length - length) != 1) {
+        return 0;
+    }
+    length += i + 1;
+
+    i = read_token(request + length, request_length - length, protocol_string);
+    if (i < 1) {
+        return 0;
+    }
+
+    if (strcmp(protocol_string, "HTTP/1.0") == 0) {
+        *protocol = PROTOCOL_HTTP10;
+    } else if (strcmp(protocol_string, "HTTP/1.1") == 0) {
+        *protocol = PROTOCOL_HTTP11;
+    } else {
+        *protocol = PROTOCOL_UNKNOWN;
+    }
+
+    length += i;
+
+    /* we should find a \r\n now */
 
     return 1;
+
+}
+
+
+/* length of token */
+
+int read_token(char *buffer, int buffer_length, char *token) {
+
+    int i;
+
+    for (i=0; (i < buffer_length) && (buffer[i] != ' ') && (buffer[i] != '\r'); i++) {}
+
+    /* the memcpy segfaults... */
+    memcpy(token, buffer, i);
+    token[i] = '\0';
+
+    return i;
+
+}
+
+
+/* number of spaces */
+
+int count_spaces(char *buffer, int buffer_length) {
+
+    int i;
+
+    for (i=0; (i < buffer_length) && (buffer[i] == ' '); i++) {}
+
+    return i;
 
 }
 
@@ -162,7 +256,8 @@ int response(void) {
 
     response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "text/plain");
     response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "text/html");
-    response_length += write_header(response_buffer + response_length, HEADER_CONTENT_TYPE, "application/xhtml+xml");
+    response_length += write_header(response_buffer + response_length, HEADER_ISLAND, "Goeree Overflakkee");
+    response_length += write_header(response_buffer + response_length, HEADER_SERVER, "Tiny httpd.c / 0.1 (maybe on Minix)");
 
     response_length += write_body(response_buffer + response_length);
 
@@ -189,7 +284,7 @@ int write_status(char *buffer, http_status status) {
         return 0;
     }
 
-    return sprintf(buffer, "%s %d %s\n", PROTOCOL, status_code, status_string);
+    return sprintf(buffer, "%s %d %s\r\n", PROTOCOL, status_code, status_string);
 
 }
 
@@ -202,11 +297,15 @@ int write_header(char *buffer, http_header header, char *value) {
 
     if (header == HEADER_CONTENT_TYPE) {
         header_string = "Content-Type";
+    } else if (header == HEADER_SERVER) {
+        header_string = "Server";
+    } else if (header == HEADER_ISLAND) {
+        header_string = "Nice-Island";
     } else {
         return 0;
     }
 
-    return sprintf(buffer, "%s: %s\n", header_string, value);
+    return sprintf(buffer, "%s: %s\r\n", header_string, value);
 
 }
 
@@ -220,7 +319,7 @@ int write_body(char *buffer) {
     int byte;
     int size = 0;
 
-    size += sprintf(buffer + size, "\n");
+    size += sprintf(buffer + size, "\r\n");
 
     /*
       More error checking here if opening file goes well.
@@ -239,7 +338,6 @@ int write_body(char *buffer) {
         && (size < MAX_RESPONSE_LENGTH)
         ) {
         size += sprintf(buffer + size, "%c", byte);
-        printf("hier eentje\n");
     }
 
     return size;
