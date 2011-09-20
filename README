@@ -1,0 +1,10 @@
+TCP implementation for Minix 2
+==============================
+
+An implementation of the TCP protocol for the Minix 2 operating system for
+the 2005 Vrije Universiteit course Computer Networks.
+
+Licensed under the BSD licens, see the LICENSE file.
+
+Laurens Bronwasser <bronwasser@gmail.com>
+Martijn Vermaat <martijn@vermaat.name
